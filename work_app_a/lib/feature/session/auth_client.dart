@@ -37,6 +37,15 @@ class AuthClient {
     return _readSession(response);
   }
 
+  Future<AppSession> refresh(String refreshToken) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/auth/refresh',
+      data: {'refresh_token': refreshToken},
+      options: Options(validateStatus: (status) => true),
+    );
+    return _readSession(response);
+  }
+
   Future<void> logout(String accessToken) async {
     await _dio.post<void>(
       '/auth/logout',

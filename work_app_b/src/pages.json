@@ -70,6 +70,12 @@
           "style": {
             "navigationBarTitleText": "群设置"
           }
+        },
+        {
+          "path": "group-announcement/index",
+          "style": {
+            "navigationBarTitleText": "群公告"
+          }
         }
       ]
     }

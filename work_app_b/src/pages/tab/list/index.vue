@@ -33,9 +33,20 @@
 
     <view v-if="current === 2" class="section">
       <view class="inline-form">
-        <u-input v-model="groupName" placeholder="群名称" border="surround" />
-        <u-input v-model="groupMembers" placeholder="成员 UID，逗号分隔" border="surround" />
-        <u-button type="primary" text="建群" @click="createGroup" />
+        <view class="member-picker">
+          <view
+            v-for="friend in friends"
+            :key="String(friend.uid)"
+            class="member-row"
+            @click="toggleGroupMember(friend)"
+          >
+            <u-avatar :text="(friend.remark || friend.nick || '员').slice(0, 1)" :src="friend.portrait" size="36" custom-style="margin-right: 10px" />
+            <text class="member-name">{{ friend.remark || friend.nick || `用户 ${friend.uid}` }}</text>
+            <view class="check-dot" :class="{ checked: isGroupMemberSelected(friend) }" />
+          </view>
+        </view>
+        <u-empty v-if="friends.length === 0" text="暂无好友可选" mode="list" />
+        <u-button type="primary" :text="createGroupButtonText" @click="createGroup" />
       </view>
       <u-cell-group>
         <u-cell v-for="group in groups" :key="group.group_id" :title="group.name" :label="`${group.member_count} 人`" is-link @click="openGroup(group)" />
@@ -55,8 +66,7 @@ const friends = ref<FriendItem[]>([]);
 const requests = ref<FriendRequestItem[]>([]);
 const groups = ref<GroupInfo[]>([]);
 const friendUid = ref('');
-const groupName = ref('');
-const groupMembers = ref('');
+const selectedGroupMemberUIDs = ref<string[]>([]);
 let removeFriendListener: (() => void) | null = null;
 let removeGroupListener: (() => void) | null = null;
 
@@ -97,20 +107,44 @@ async function handleRequest(request_id: string, accept: boolean) {
 }
 
 async function createGroup() {
-  const member_uids = parseUIDs(groupMembers.value);
-  if (!groupName.value.trim())
-    return uni.$u.toast('请输入群名称');
-  if (!member_uids.length)
-    return uni.$u.toast('请输入正确的成员 UID');
-  await IMApi.createGroup({ name: groupName.value.trim(), member_uids });
-  groupName.value = '';
-  groupMembers.value = '';
+  if (!selectedGroupMemberUIDs.value.length)
+    return uni.$u.toast('请选择群成员');
+  const selected = selectedFriends();
+  if (selected.length === 1) {
+    selectedGroupMemberUIDs.value = [];
+    openPeer(selected[0]);
+    return;
+  }
+  await IMApi.createGroup({ name: defaultGroupName(), member_uids: selectedGroupMemberUIDs.value });
+  selectedGroupMemberUIDs.value = [];
   await loadAll();
 }
 
-function parseUIDs(value: string) {
-  const list = value.split(',').map(item => item.trim()).filter(Boolean);
-  return list.every(item => /^\d+$/.test(item)) ? list : [];
+const createGroupButtonText = computed(() => `建群${selectedGroupMemberUIDs.value.length ? `(${selectedGroupMemberUIDs.value.length})` : ''}`);
+
+function toggleGroupMember(friend: FriendItem) {
+  const uid = String(friend.uid);
+  selectedGroupMemberUIDs.value = selectedGroupMemberUIDs.value.includes(uid)
+    ? selectedGroupMemberUIDs.value.filter(item => item !== uid)
+    : [...selectedGroupMemberUIDs.value, uid];
+}
+
+function isGroupMemberSelected(friend: FriendItem) {
+  return selectedGroupMemberUIDs.value.includes(String(friend.uid));
+}
+
+function friendName(friend: FriendItem) {
+  return friend.remark || friend.nick || `用户 ${friend.uid}`;
+}
+
+function selectedFriends() {
+  return friends.value.filter(friend => selectedGroupMemberUIDs.value.includes(String(friend.uid)));
+}
+
+function defaultGroupName() {
+  const list = selectedFriends();
+  const names = list.slice(0, 3).map(friendName).join('、');
+  return `${names}${list.length > 3 ? '...' : ''}`;
 }
 
 async function loadAll() {
@@ -167,5 +201,46 @@ onUnload(() => {
 .actions {
   display: flex;
   gap: 8px;
+}
+
+.member-picker {
+  overflow-y: auto;
+  max-height: 280px;
+  background: #fff;
+  border: 1px solid #edf0f5;
+  border-radius: 8px;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  min-height: 54px;
+  padding: 9px 10px;
+  box-sizing: border-box;
+}
+
+.member-row + .member-row {
+  border-top: 1px solid #edf0f5;
+}
+
+.member-name {
+  overflow: hidden;
+  flex: 1;
+  color: #172033;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.check-dot {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #c8cfda;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.check-dot.checked {
+  border: 6px solid #21d59d;
 }
 </style>

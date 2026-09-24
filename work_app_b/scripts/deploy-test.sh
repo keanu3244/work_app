@@ -9,6 +9,9 @@ REMOTE_TMP_DIR="${DEPLOY_TMP_DIR:-/tmp/work-app-b-deploy}"
 REMOTE_HOST_DEFAULT="ubuntu@43.155.239.210"
 REMOTE_HOST="${DEPLOY_HOST:-$REMOTE_HOST_DEFAULT}"
 PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-http://43.155.239.210}"
+LOCAL_APK_PATH_DEFAULT="$PROJECT_DIR/../work_app_a/build/app/outputs/flutter-apk/app-production-release.apk"
+LOCAL_APK_PATH="${WORK_APP_APK_PATH:-$LOCAL_APK_PATH_DEFAULT}"
+REMOTE_APK_NAME="${WORK_APP_APK_NAME:-work-app-a.apk}"
 REMOTE_PORT_DEFAULT="22"
 REMOTE_PORT="${DEPLOY_PORT:-$REMOTE_PORT_DEFAULT}"
 SSH_KEY_PATH_DEFAULT="$HOME/.ssh/ssh-key.pem"
@@ -57,10 +60,19 @@ echo "==> Upload new files to temp directory"
 run_scp "$BUILD_DIR/." "$REMOTE_HOST:$REMOTE_TMP_DIR/"
 
 echo "==> Publish files"
-run_ssh "sudo mkdir -p '$REMOTE_DIR' && sudo find '$REMOTE_DIR' -mindepth 1 -maxdepth 1 -exec rm -rf {} + && sudo cp -a '$REMOTE_TMP_DIR/.' '$REMOTE_DIR/' && rm -rf '$REMOTE_TMP_DIR'"
+run_ssh "sudo mkdir -p '$REMOTE_DIR/downloads' && sudo find '$REMOTE_DIR' -mindepth 1 -maxdepth 1 ! -name downloads -exec rm -rf {} + && sudo cp -a '$REMOTE_TMP_DIR/.' '$REMOTE_DIR/' && rm -rf '$REMOTE_TMP_DIR'"
+
+if [[ -f "$LOCAL_APK_PATH" ]]; then
+  echo "==> Upload APK: $LOCAL_APK_PATH"
+  run_scp "$LOCAL_APK_PATH" "$REMOTE_HOST:$REMOTE_TMP_DIR-$REMOTE_APK_NAME"
+  run_ssh "sudo mkdir -p '$REMOTE_DIR/downloads' && sudo mv '$REMOTE_TMP_DIR-$REMOTE_APK_NAME' '$REMOTE_DIR/downloads/$REMOTE_APK_NAME'"
+else
+  echo "==> APK not found, skip upload: $LOCAL_APK_PATH"
+fi
 
 echo "==> Verify remote files"
 run_ssh "test -f '$REMOTE_DIR/index.html' && stat '$REMOTE_DIR/index.html' || ls -la '$REMOTE_DIR' | head"
 
 echo "==> Deploy done"
 echo "URL: ${PUBLIC_ORIGIN}${PUBLIC_PATH}"
+echo "APK: ${PUBLIC_ORIGIN}${PUBLIC_PATH}downloads/${REMOTE_APK_NAME}"

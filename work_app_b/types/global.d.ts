@@ -41,6 +41,8 @@ declare global {
       uid: string;
       sid: string;
       nick?: string;
+      app_version_name?: string;
+      app_version_code?: number;
     };
   }
 }

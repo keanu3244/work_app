@@ -2,11 +2,19 @@
   <view class="chat-page">
     <view class="chat-header">
       <u-icon name="arrow-left" size="22" @click="back" />
-      <text class="chat-title">{{ title }}</text>
-      <u-button v-if="options.type === '2'" size="mini" text="群设置" @click="openGroupSettings" />
+      <view class="chat-heading">
+        <text class="chat-title">{{ title }}</text>
+        <u-icon v-if="options.type === '2'" name="setting" size="20" @click="openGroupSettings" />
+      </view>
     </view>
 
-    <scroll-view class="messages" scroll-y :scroll-into-view="lastMessageId">
+    <view v-if="hasAnnouncement" class="announcement-bar" @click="openAnnouncement">
+      <text class="announcement-label">群公告</text>
+      <text class="announcement-preview">{{ announcement }}</text>
+      <u-icon name="arrow-right" size="16" color="#8a94a6" />
+    </view>
+
+    <scroll-view class="messages" :class="{ 'has-announcement': hasAnnouncement }" scroll-y :scroll-into-view="lastMessageId">
       <view v-if="orderedMessages.length === 0" class="empty-chat">
         <view class="empty-title">开始聊天</view>
         <view class="empty-subtitle">给 {{ title }} 发送第一条消息</view>
@@ -51,8 +59,20 @@
 
     <view class="composer">
       <u-button class="tool-button" text="+" @click="sendImage" />
-      <u-input v-model="draft" placeholder="输入消息" border="none" confirm-type="send" @confirm="send" />
-      <u-button type="primary" text="发送" @click="send" />
+      <textarea
+        v-model="draft"
+        class="composer-input"
+        placeholder="输入消息"
+        :adjust-position="false"
+        auto-height
+        confirm-hold
+        confirm-type="send"
+        @confirm="send"
+        @keydown.enter.prevent="send"
+        @compositionstart="onCompositionStart"
+        @compositionend="onCompositionEnd"
+      />
+      <u-button type="primary" text="发送" @tap="send" @click="send" />
     </view>
   </view>
 </template>
@@ -68,6 +88,9 @@ const options = ref<Record<string, string>>({});
 const title = computed(() => options.value.title || '聊天');
 const messages = ref<ChatMessage[]>([]);
 const draft = ref('');
+const composing = ref(false);
+const announcement = ref('');
+const hasAnnouncement = computed(() => options.value.type === '2' && !!announcement.value);
 const lastMessageId = computed(() => {
   const last = orderedMessages.value[orderedMessages.value.length - 1];
   return last ? `msg-${last.msg_id}` : '';
@@ -105,8 +128,26 @@ function openGroupSettings() {
   const params = new URLSearchParams({
     group_id: options.value.peer_id,
     title: title.value,
+    announcement: announcement.value,
   });
   uni.navigateTo({ url: `/pages/common/group/index?${params.toString()}` });
+}
+
+function openAnnouncement() {
+  const params = new URLSearchParams({
+    group_id: options.value.peer_id,
+    title: title.value,
+    announcement: announcement.value,
+  });
+  uni.navigateTo({ url: `/pages/common/group-announcement/index?${params.toString()}` });
+}
+
+function onCompositionStart() {
+  composing.value = true;
+}
+
+function onCompositionEnd() {
+  composing.value = false;
 }
 
 function previewImage(message: ChatMessage) {
@@ -142,6 +183,14 @@ async function loadMessages() {
   }
 }
 
+async function loadGroupProfile() {
+  if (options.value.type !== '2')
+    return;
+  const res = await IMApi.groups();
+  const group = res.list.find(item => item.group_id === options.value.peer_id);
+  announcement.value = group?.announcement || '';
+}
+
 async function recall(message: ChatMessage) {
   if (!canRecall(message) || !options.value.contact_id)
     return;
@@ -153,6 +202,8 @@ async function recall(message: ChatMessage) {
 }
 
 async function send() {
+  if (composing.value)
+    return;
   const text = draft.value.trim();
   if (!text)
     return;
@@ -210,6 +261,7 @@ function bindRealtime() {
       return;
     if (payload?.group_id && String(payload.group_id) !== options.value.peer_id)
       return;
+    loadGroupProfile();
     loadMessages();
   };
   uni.$on('im.peer', peerHandler);
@@ -222,7 +274,12 @@ onLoad((query) => {
   options.value = Object.fromEntries(Object.entries(query || {}).map(([key, value]) => [key, String(value)]));
   uni.setNavigationBarTitle({ title: title.value });
   bindRealtime();
+  loadGroupProfile();
   loadMessages();
+});
+
+onShow(() => {
+  loadGroupProfile();
 });
 
 onUnload(() => {
@@ -249,9 +306,18 @@ onUnload(() => {
   box-sizing: border-box;
 }
 
-.chat-title {
+.chat-heading {
+  display: flex;
+  min-width: 0;
   flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.chat-title {
   overflow: hidden;
+  max-width: min(70vw, 360px);
   color: #172033;
   font-size: 17px;
   font-weight: 700;
@@ -263,6 +329,39 @@ onUnload(() => {
   height: calc(100vh - 56px - 66px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   padding: 16px 12px;
   box-sizing: border-box;
+}
+
+.messages.has-announcement {
+  height: calc(100vh - 56px - 45px - 66px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+
+.announcement-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 45px;
+  padding: 10px 12px;
+  background: #fff;
+  border-top: 1px solid #eef0f4;
+  border-bottom: 1px solid #eef0f4;
+  box-sizing: border-box;
+}
+
+.announcement-label {
+  flex: 0 0 auto;
+  color: #172033;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.announcement-preview {
+  overflow: hidden;
+  flex: 1;
+  color: #7a8499;
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .message-row {
@@ -326,11 +425,17 @@ onUnload(() => {
   box-sizing: border-box;
 }
 
-.composer :deep(.u-input) {
+.composer-input {
   min-height: 42px;
-  padding: 0 12px !important;
+  max-height: 96px;
+  padding: 9px 12px;
+  color: #172033;
+  font-size: 15px;
+  line-height: 22px;
   background: #fff;
+  border: 0;
   border-radius: 6px;
+  box-sizing: border-box;
 }
 
 .tool-button {

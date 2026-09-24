@@ -2,8 +2,16 @@
   <view class="page">
     <view class="panel">
       <u-input v-model="name" placeholder="群名称" border="surround" />
-      <u-input v-model="announcement" placeholder="群公告" border="surround" />
-      <u-button type="primary" text="保存资料" @click="updateProfile" />
+      <u-button type="primary" text="保存群名称" @click="updateProfile" />
+    </view>
+
+    <view class="panel">
+      <u-cell
+        title="群公告"
+        :label="announcement || '未设置'"
+        is-link
+        @click="openAnnouncement"
+      />
     </view>
 
     <view class="panel">
@@ -68,13 +76,30 @@ async function loadMembers() {
   members.value = res.list;
 }
 
+async function loadGroupProfile() {
+  const res = await IMApi.groups();
+  const group = res.list.find(item => item.group_id === groupId.value);
+  if (!group)
+    return;
+  name.value = group.name;
+  announcement.value = group.announcement || '';
+}
+
 async function updateProfile() {
   await IMApi.updateGroup({
     group_id: groupId.value,
     name: name.value,
-    announcement: announcement.value,
   });
   uni.$u.toast('已保存');
+}
+
+function openAnnouncement() {
+  const params = new URLSearchParams({
+    group_id: groupId.value,
+    title: name.value,
+    announcement: announcement.value,
+  });
+  uni.navigateTo({ url: `/pages/common/group-announcement/index?${params.toString()}` });
 }
 
 async function addMembers() {
@@ -114,7 +139,14 @@ async function dissolve() {
 onLoad((query) => {
   groupId.value = String(query?.group_id || '');
   name.value = String(query?.title || '');
+  announcement.value = String(query?.announcement || '');
+  loadGroupProfile();
   loadMembers();
+});
+
+onShow(() => {
+  if (groupId.value)
+    loadGroupProfile();
 });
 </script>
 

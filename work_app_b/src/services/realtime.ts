@@ -15,10 +15,13 @@ function messageText(message: any) {
 
 function notify(title: string, body: string) {
   const bridge = (window as Window & {
-    flutter_inappwebview?: { callHandler?: (name: string, payload?: unknown) => void };
+    flutter_inappwebview?: { callHandler?: (name: string, payload?: unknown) => Promise<unknown> };
   }).flutter_inappwebview;
   if (bridge?.callHandler) {
-    bridge.callHandler('workAppNotify', { title, body });
+    bridge.callHandler('workAppNotify', { title, body }).then((shown) => {
+      if (shown === false)
+        uni.showToast({ title: '通知权限未开启', icon: 'none' });
+    });
   }
   else {
     uni.showToast({ title: body, icon: 'none' });

@@ -9,59 +9,101 @@
     </view>
 
     <view v-if="showGroupForm" class="quick-card">
-      <u-input v-model="groupName" placeholder="群名称" border="surround" />
-      <u-input v-model="groupMembers" placeholder="成员 UID，逗号分隔" border="surround" />
-      <u-button type="primary" text="创建" @click="createGroup" />
+      <view class="member-picker">
+        <view
+          v-for="friend in friends"
+          :key="String(friend.uid)"
+          class="member-row"
+          @click="toggleGroupMember(friend)"
+        >
+          <u-avatar
+            :text="(friend.remark || friend.nick || '员').slice(0, 1)"
+            :src="friend.portrait"
+            size="36"
+            custom-style="margin-right: 10px"
+          />
+          <text class="member-name">{{ friend.remark || friend.nick || `用户 ${friend.uid}` }}</text>
+          <view class="check-dot" :class="{ checked: isGroupMemberSelected(friend) }" />
+        </view>
+      </view>
+      <u-empty v-if="friends.length === 0" text="暂无好友可选" mode="list" />
+      <u-button type="primary" :text="createGroupButtonText" @click="createGroup" />
     </view>
 
-    <view class="section-title">好友</view>
-    <view v-if="friends.length > 0" class="list">
+    <view class="section-title">消息</view>
+    <view v-if="homeItems.length > 0" class="list">
       <view
-        v-for="friend in friends"
-        :key="String(friend.uid)"
+        v-for="item in homeItems"
+        :key="item.key"
         class="chat-row"
-        @click="openFriend(friend)"
+        @click="openHomeItem(item)"
       >
         <u-avatar
-          :text="(friend.remark || friend.nick || '员').slice(0, 1)"
-          :src="friend.portrait"
+          :text="item.avatarText"
+          :src="item.avatar"
           size="48"
           custom-style="margin-right: 12px"
         />
         <view class="row-main">
           <view class="row-top">
-            <text class="row-title">{{ friend.remark || friend.nick || `用户 ${friend.uid}` }}</text>
-            <text class="row-time">{{ conversationTime(friendConversation(friend)?.last_msg?.create_time) }}</text>
+            <text class="row-title">{{ item.title }}</text>
+            <text class="row-time">{{ conversationTime(item.conversation?.last_msg?.create_time) }}</text>
           </view>
           <view class="row-bottom">
-            <text class="row-preview">{{ messagePreview(friendConversation(friend)?.last_msg) }}</text>
+            <text class="row-preview">{{ messagePreview(item.conversation?.last_msg) }}</text>
             <view class="row-badge">
-              <u-badge v-if="friendConversation(friend)?.unread_count" :value="friendConversation(friend)?.unread_count" />
+              <u-badge v-if="item.conversation?.unread_count" :value="item.conversation?.unread_count" />
             </view>
           </view>
         </view>
       </view>
     </view>
-    <u-empty v-else-if="!loading" text="暂无好友" mode="list" />
+    <u-empty v-else-if="!loading" text="暂无消息" mode="list" />
   </view>
 </template>
 
 <script setup lang="ts">
-import type { ChatMessage, Conversation, FriendItem } from '@/api/im';
+import type { ChatMessage, Conversation, FriendItem, GroupInfo } from '@/api/im';
 import { IMApi } from '@/api';
 
 const loading = ref(false);
 const conversations = ref<Conversation[]>([]);
 const friends = ref<FriendItem[]>([]);
+const groups = ref<GroupInfo[]>([]);
 const showGroupForm = ref(false);
-const groupName = ref('');
-const groupMembers = ref('');
+const selectedGroupMemberUIDs = ref<string[]>([]);
 let removePeerListener: (() => void) | null = null;
 let removeGroupListener: (() => void) | null = null;
 let removeFriendListener: (() => void) | null = null;
+const createGroupButtonText = computed(() => `创建群聊${selectedGroupMemberUIDs.value.length ? `(${selectedGroupMemberUIDs.value.length})` : ''}`);
+const homeItems = computed(() => {
+  const friendItems = friends.value.map(friend => ({
+    key: `friend-${friend.uid}`,
+    type: 'friend' as const,
+    title: friendName(friend),
+    avatar: friend.portrait,
+    avatarText: (friendName(friend) || '员').slice(0, 1),
+    peerId: String(friend.uid),
+    conversation: friendConversation(friend),
+  }));
+  const groupItems = groups.value.map(group => ({
+    key: `group-${group.group_id}`,
+    type: 'group' as const,
+    title: group.name,
+    avatar: group.portrait,
+    avatarText: (group.name || '群').slice(0, 1),
+    peerId: group.group_id,
+    conversation: groupConversation(group),
+  }));
+  return [...friendItems, ...groupItems].sort((a, b) => (b.conversation?.last_msg?.create_time || 0) - (a.conversation?.last_msg?.create_time || 0));
+});
 
 function friendConversation(friend: FriendItem) {
   return conversations.value.find(item => item.contact_type === 1 && peerUID(item) === String(friend.uid));
+}
+
+function groupConversation(group: GroupInfo) {
+  return conversations.value.find(item => item.contact_type === 2 && String(item.peer_id || item.group?.group_id || '') === group.group_id);
 }
 
 function peerUID(item: Conversation) {
@@ -85,35 +127,75 @@ function conversationTime(time?: number) {
 
 function openFriend(friend: FriendItem) {
   const contact = friendConversation(friend);
-  const params = new URLSearchParams({
-    contact_id: contact?.contact_id || '',
+  openChat({
+    contactId: contact?.contact_id || '',
     type: '1',
-    title: friend.remark || friend.nick || `用户 ${friend.uid}`,
-    peer_id: String(friend.uid),
+    title: friendName(friend),
+    peerId: String(friend.uid),
+  });
+}
+
+function openChat(data: { contactId?: string; type: '1' | '2'; title: string; peerId: string }) {
+  const params = new URLSearchParams({
+    contact_id: data.contactId || '',
+    type: data.type,
+    title: data.title,
+    peer_id: data.peerId,
   });
   uni.navigateTo({ url: `/pages/common/chat/index?${params.toString()}` });
 }
 
-function parseUIDs(value: string) {
-  const list = value.split(',').map(item => item.trim()).filter(Boolean);
-  return list.every(item => /^\d+$/.test(item)) ? list : [];
+function openHomeItem(item: HomeItem) {
+  openChat({
+    contactId: item.conversation?.contact_id || '',
+    type: item.type === 'group' ? '2' : '1',
+    title: item.title,
+    peerId: item.peerId,
+  });
 }
 
 function toggleGroupForm() {
   showGroupForm.value = !showGroupForm.value;
 }
 
+function toggleGroupMember(friend: FriendItem) {
+  const uid = String(friend.uid);
+  selectedGroupMemberUIDs.value = selectedGroupMemberUIDs.value.includes(uid)
+    ? selectedGroupMemberUIDs.value.filter(item => item !== uid)
+    : [...selectedGroupMemberUIDs.value, uid];
+}
+
+function isGroupMemberSelected(friend: FriendItem) {
+  return selectedGroupMemberUIDs.value.includes(String(friend.uid));
+}
+
+function friendName(friend: FriendItem) {
+  return friend.remark || friend.nick || `用户 ${friend.uid}`;
+}
+
+function selectedFriends() {
+  return friends.value.filter(friend => selectedGroupMemberUIDs.value.includes(String(friend.uid)));
+}
+
+function defaultGroupName() {
+  const list = selectedFriends();
+  const names = list.slice(0, 3).map(friendName).join('、');
+  return `${names}${list.length > 3 ? '...' : ''}`;
+}
+
 async function createGroup() {
-  const name = groupName.value.trim();
-  const member_uids = parseUIDs(groupMembers.value);
-  if (!name)
-    return uni.$u.toast('请输入群名称');
-  if (!member_uids.length)
-    return uni.$u.toast('请输入正确的成员 UID');
+  if (!selectedGroupMemberUIDs.value.length)
+    return uni.$u.toast('请选择群成员');
+  const selected = selectedFriends();
+  if (selected.length === 1) {
+    selectedGroupMemberUIDs.value = [];
+    showGroupForm.value = false;
+    openFriend(selected[0]);
+    return;
+  }
   try {
-    const group = await IMApi.createGroup({ name, member_uids });
-    groupName.value = '';
-    groupMembers.value = '';
+    const group = await IMApi.createGroup({ name: defaultGroupName(), member_uids: selectedGroupMemberUIDs.value });
+    selectedGroupMemberUIDs.value = [];
     showGroupForm.value = false;
     await loadHome();
     const params = new URLSearchParams({
@@ -131,12 +213,14 @@ async function createGroup() {
 async function loadHome() {
   loading.value = true;
   try {
-    const [conversationRes, friendRes] = await Promise.all([
+    const [conversationRes, friendRes, groupRes] = await Promise.all([
       IMApi.conversations(),
       IMApi.friends(),
+      IMApi.groups(),
     ]);
     conversations.value = conversationRes.contacts;
     friends.value = friendRes.list;
+    groups.value = groupRes.list;
   }
   finally {
     loading.value = false;
@@ -165,6 +249,8 @@ onUnload(() => {
   removeGroupListener?.();
   removeFriendListener?.();
 });
+
+type HomeItem = typeof homeItems.value[number];
 </script>
 
 <style scoped lang="scss">
@@ -200,6 +286,47 @@ onUnload(() => {
   padding: 12px;
   background: #fff;
   border-radius: 8px;
+}
+
+.member-picker {
+  overflow-y: auto;
+  max-height: 280px;
+  background: #fff;
+  border: 1px solid #edf0f5;
+  border-radius: 8px;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  min-height: 54px;
+  padding: 9px 10px;
+  box-sizing: border-box;
+}
+
+.member-row + .member-row {
+  border-top: 1px solid #edf0f5;
+}
+
+.member-name {
+  overflow: hidden;
+  flex: 1;
+  color: #172033;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.check-dot {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #c8cfda;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.check-dot.checked {
+  border: 6px solid #21d59d;
 }
 
 .section-title {

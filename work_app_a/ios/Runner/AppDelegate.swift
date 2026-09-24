@@ -25,6 +25,27 @@ import UserNotifications
         }
         self?.getDevicePushToken(application: application, result: result)
       }
+      let systemChannel = FlutterMethodChannel(
+        name: "work_app/system",
+        binaryMessenger: controller.binaryMessenger
+      )
+      systemChannel.setMethodCallHandler { call, result in
+        guard call.method == "openUrl" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        guard
+          let args = call.arguments as? [String: Any],
+          let raw = args["url"] as? String,
+          let url = URL(string: raw)
+        else {
+          result(false)
+          return
+        }
+        UIApplication.shared.open(url) { opened in
+          result(opened)
+        }
+      }
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }

@@ -2,6 +2,7 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_boilerplate/feature/auth/widget/sign_in_page.dart';
 import 'package:flutter_boilerplate/feature/notification/local_notification_service.dart';
 import 'package:flutter_boilerplate/feature/notification/push_registration_service.dart';
@@ -22,13 +23,16 @@ class WorkContainerPage extends StatefulWidget {
 class _WorkContainerPageState extends State<WorkContainerPage> {
   final _store = const AppSessionStore();
   final _authClient = AuthClient();
+  static const _systemChannel = MethodChannel('work_app/system');
   int _reloadKey = 0;
+  late final String _webCacheKey;
   bool _loading = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _webCacheKey = DateTime.now().millisecondsSinceEpoch.toString();
     _registerPushToken();
   }
 
@@ -53,6 +57,7 @@ class _WorkContainerPageState extends State<WorkContainerPage> {
         'uid': widget.session.uid,
         'sid': widget.session.sid,
         'token': widget.session.accessToken,
+        'app_v': _webCacheKey,
       },
     ).toString();
   }
@@ -63,8 +68,24 @@ class _WorkContainerPageState extends State<WorkContainerPage> {
       'sid': widget.session.sid,
       'access_token': widget.session.accessToken,
       'nick': widget.session.nick,
+      'app_version_name': dotenv.env['APP_VERSION_NAME'] ?? '1.0.0',
+      'app_version_code':
+          int.tryParse(dotenv.env['APP_VERSION_CODE'] ?? '') ?? 1,
     });
     return 'window.__WORK_APP_SESSION__ = $payload;';
+  }
+
+  Future<bool> _openExternalUrl(String url) async {
+    if (url.isEmpty) return false;
+    try {
+      return await _systemChannel.invokeMethod<bool>(
+            'openUrl',
+            {'url': url},
+          ) ??
+          false;
+    } on PlatformException {
+      return false;
+    }
   }
 
   Future<void> _logout() async {
@@ -97,6 +118,10 @@ class _WorkContainerPageState extends State<WorkContainerPage> {
           children: [
             InAppWebView(
               key: ValueKey(_reloadKey),
+              initialSettings: InAppWebViewSettings(
+                cacheEnabled: false,
+                clearCache: true,
+              ),
               initialUrlRequest: URLRequest(url: WebUri(_launchUrl)),
               initialUserScripts: UnmodifiableListView([
                 UserScript(
@@ -123,11 +148,24 @@ class _WorkContainerPageState extends State<WorkContainerPage> {
                           payload is Map ? payload : const <String, dynamic>{};
                       final title = data['title']?.toString() ?? 'Work IM';
                       final body = data['body']?.toString() ?? '你收到一条新消息';
-                      await LocalNotificationService.instance.showMessage(
+                      final shown =
+                          await LocalNotificationService.instance.showMessage(
                         title: title,
                         body: body,
                       );
-                      return true;
+                      return shown;
+                    },
+                  )
+                  ..addJavaScriptHandler(
+                    handlerName: 'workAppOpenUrl',
+                    callback: (arguments) async {
+                      final payload = arguments.isNotEmpty
+                          ? arguments.first
+                          : const <String, dynamic>{};
+                      final data =
+                          payload is Map ? payload : const <String, dynamic>{};
+                      final url = data['url']?.toString() ?? '';
+                      return _openExternalUrl(url);
                     },
                   );
               },

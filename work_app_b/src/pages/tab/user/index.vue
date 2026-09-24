@@ -26,6 +26,7 @@
     <view class="section">
       <u-cell-group>
         <u-cell icon="chat" title="会话" is-link @click="goMessages" />
+        <u-cell icon="download" title="版本更新" :label="versionLabel" is-link @click="checkUpdate" />
       </u-cell-group>
     </view>
 
@@ -54,10 +55,13 @@ import { IMApi } from '@/api';
 import { useClipboard } from '@/hooks';
 import { clearToken, getSession } from '@/utils/auth';
 import { disconnectRealtime } from '@/services/realtime';
+import { currentAppVersion, fetchAppUpdateInfo, hasNewVersion, openAppUpdateUrl } from '@/services/update';
 
 const { setClipboardData, getClipboardData } = useClipboard();
 const session = computed(() => getSession());
 const blocks = ref<UserBasic[]>([]);
+const currentVersion = computed(() => currentAppVersion());
+const versionLabel = computed(() => `当前版本 ${currentVersion.value.versionName}`);
 
 // 复制
 const toCopyUid = async () => {
@@ -68,6 +72,36 @@ const toCopyUid = async () => {
 
 function goMessages() {
   uni.switchTab({ url: '/pages/tab/home/index' });
+}
+
+async function checkUpdate() {
+  try {
+    uni.showLoading({ title: '检查更新' });
+    const info = await fetchAppUpdateInfo();
+    uni.hideLoading();
+    if (!hasNewVersion(info)) {
+      uni.$u.toast('当前已是最新版本');
+      return;
+    }
+    const notes = info.notes.join('\n');
+    uni.showModal({
+      title: `发现新版本 ${info.versionName}`,
+      content: notes,
+      showCancel: !info.force,
+      confirmText: '立即更新',
+      success: async (res) => {
+        if (!res.confirm)
+          return;
+        const opened = await openAppUpdateUrl(info);
+        if (!opened)
+          uni.$u.toast('打开下载链接失败');
+      },
+    });
+  }
+  catch (error: any) {
+    uni.hideLoading();
+    uni.$u.toast(error?.message || '检查更新失败');
+  }
 }
 
 async function loadBlocks() {
