@@ -416,30 +416,33 @@ onUnload(() => {
   left: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 42px minmax(0, 1fr) 76px;
   align-items: center;
-  gap: 10px;
-  padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
-  background: #f7f8fb;
-  border-top: 1px solid #eceff5;
+  gap: 8px;
+  padding: 9px 12px calc(9px + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.96);
+  border-top: 1px solid #e5eaf2;
+  box-shadow: 0 -8px 24px rgba(20, 35, 58, 0.06);
   box-sizing: border-box;
 }
 
 .composer-input {
   min-height: 42px;
-  max-height: 96px;
+  max-height: 88px;
   padding: 9px 12px;
   color: #172033;
   font-size: 15px;
   line-height: 22px;
-  background: #fff;
-  border: 0;
+  background: #f8fafc;
+  border: 1px solid #d7dee9;
   border-radius: 6px;
   box-sizing: border-box;
+  outline: none;
 }
 
 .tool-button {
   width: 42px;
+  height: 42px;
 }
 
 .chat-image {

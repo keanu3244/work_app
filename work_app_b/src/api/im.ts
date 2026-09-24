@@ -1,12 +1,23 @@
 import { post } from '@/utils/request';
 import { getToken } from '@/utils/auth';
 
+function apiBaseURL() {
+  // #ifdef H5
+  if (import.meta.env.VITE_APP_PROXY === 'true')
+    return import.meta.env.VITE_API_PREFIX;
+  // #endif
+  return import.meta.env.VITE_API_BASE_URL;
+}
+
 function parseIMPayload(text: string) {
   return JSON.parse(text.replace(/:\s*(-?\d{16,})(?=\s*[,}\]])/g, ':"$1"'));
 }
 
 function buildIMURL(url: string, params?: Record<string, string | number | undefined>) {
-  const target = new URL(`${import.meta.env.VITE_API_BASE_URL}${url}`);
+  const requestURL = `${apiBaseURL()}${url}`;
+  const target = requestURL.startsWith('http')
+    ? new URL(requestURL)
+    : new URL(requestURL, window.location.origin);
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined && value !== '')
       target.searchParams.set(key, String(value));
@@ -27,7 +38,7 @@ async function getRawJson<T>(url: string, params?: Record<string, string | numbe
 }
 
 async function postRawJson<T>(url: string, body: string) {
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}${url}`, {
+  const response = await fetch(`${apiBaseURL()}${url}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getToken()}`,
@@ -187,7 +198,7 @@ export const IMApi = {
 export async function uploadImage(filePath: string) {
   const response = await fetch(filePath);
   const blob = await response.blob();
-  const uploadResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL}/upload/image?sufix=.jpg`, {
+  const uploadResponse = await fetch(`${apiBaseURL()}/upload/image?sufix=.jpg`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getToken()}`,

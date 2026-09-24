@@ -931,7 +931,7 @@ onUnload(() => {
 
 .messages {
   min-height: 0;
-  padding: 18px;
+  padding: 20px 24px;
   box-sizing: border-box;
 }
 
@@ -991,29 +991,41 @@ onUnload(() => {
 
 .composer {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: end;
-  padding: 12px 18px;
+  grid-template-columns: 44px minmax(180px, 720px) 96px;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 24px;
   background: #fff;
   border-top: 1px solid #e5eaf2;
+  box-shadow: 0 -10px 24px rgba(20, 35, 58, 0.04);
 }
 
 .icon-button {
-  width: 42px;
+  width: 44px;
+  height: 44px;
 }
 
 .composer-input {
+  width: 100%;
   min-height: 44px;
-  max-height: 108px;
-  padding: 10px 12px;
+  max-height: 92px;
+  padding: 10px 14px;
   color: #172033;
   font-size: 15px;
   line-height: 22px;
   background: #f8fafc;
-  border: 1px solid #dfe5ee;
+  border: 1px solid #d7dee9;
   border-radius: 6px;
   box-sizing: border-box;
+  outline: none;
+  resize: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.composer-input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 .blank-chat {
@@ -1040,6 +1052,11 @@ onUnload(() => {
 
   .panel {
     display: none;
+  }
+
+  .composer {
+    grid-template-columns: 40px minmax(0, 1fr) 72px;
+    padding: 10px 12px;
   }
 }
 </style>
