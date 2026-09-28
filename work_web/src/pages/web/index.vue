@@ -50,6 +50,12 @@
                 <text class="row-time">{{ conversationTime(item.conversation?.last_msg?.create_time) }}</text>
               </view>
               <view class="row-bottom">
+                <image
+                  v-if="imageUrl(item.conversation?.last_msg)"
+                  class="row-image-preview"
+                  :src="imageUrl(item.conversation?.last_msg)"
+                  mode="aspectFill"
+                />
                 <text class="row-preview">{{ messagePreview(item.conversation?.last_msg) }}</text>
                 <u-badge v-if="item.conversation?.unread_count" :value="item.conversation.unread_count" />
               </view>
@@ -230,14 +236,20 @@
         </scroll-view>
 
         <view class="composer">
-          <u-button class="icon-button" text="+" @click="sendImage" />
-          <textarea
-            v-model="draft"
-            class="composer-input"
-            placeholder="Enter 发送，Shift + Enter 换行"
-            :adjust-position="false"
-            @keydown.enter.exact.prevent="send"
-          />
+          <u-button class="icon-button" text="+" @click="chooseImage" />
+          <view class="composer-main">
+            <view v-if="pendingImagePath" class="pending-image" @click="previewPendingImage">
+              <image :src="pendingImagePath" mode="aspectFill" />
+              <text class="pending-remove" @click.stop="clearPendingImage">×</text>
+            </view>
+            <textarea
+              v-model="draft"
+              class="composer-input"
+              placeholder="Enter 发送，Shift + Enter 换行"
+              :adjust-position="false"
+              @keydown.enter.exact.prevent="send"
+            />
+          </view>
           <u-button type="primary" text="发送" @click="send" />
         </view>
       </template>
@@ -291,6 +303,7 @@ const groupName = ref('');
 const selectedGroupMemberUIDs = ref<string[]>([]);
 const showGroupTools = ref(false);
 const announcementDraft = ref('');
+const pendingImagePath = ref('');
 let removePeerListener: (() => void) | null = null;
 let removeGroupListener: (() => void) | null = null;
 let removeFriendListener: (() => void) | null = null;
@@ -328,9 +341,9 @@ function conversationTime(time?: number) {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-function imageUrl(message: ChatMessage) {
-  const url = message.content.image_content?.url;
-  const raw = Array.isArray(url) ? url[0] : url;
+function imageUrl(message?: ChatMessage) {
+  const url = message?.content.image_content?.url;
+  const raw = Array.isArray(url) ? url[0] : typeof url === 'object' ? url?.url : url;
   if (!raw)
     return '';
   if (/^(https?:)?\/\//.test(raw) || /^(data|blob|file):/.test(raw))
@@ -518,45 +531,60 @@ async function loadMessages() {
 
 async function send() {
   const text = draft.value.trim();
-  if (!text || !activeItem.value)
+  const imagePath = pendingImagePath.value;
+  if ((!text && !imagePath) || !activeItem.value)
     return;
   draft.value = '';
-  if (activeItem.value.type === 'group') {
-    const message = await IMApi.sendGroup({ group_id: activeItem.value.peerId, text });
-    activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
+  pendingImagePath.value = '';
+  if (text) {
+    if (activeItem.value.type === 'group') {
+      const message = await IMApi.sendGroup({ group_id: activeItem.value.peerId, text });
+      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
+    }
+    else {
+      const message = await IMApi.sendPeer({
+        receiver_uid: activeItem.value.peerId,
+        contact_id: activeItem.value.conversation?.contact_id,
+        text,
+      });
+      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
+    }
   }
-  else {
-    const message = await IMApi.sendPeer({
-      receiver_uid: activeItem.value.peerId,
-      contact_id: activeItem.value.conversation?.contact_id,
-      text,
-    });
-    activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
+  if (imagePath) {
+    const url = await uploadImage(imagePath);
+    if (activeItem.value.type === 'group') {
+      const message = await IMApi.sendGroupImage({ group_id: activeItem.value.peerId, url });
+      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
+    }
+    else {
+      const message = await IMApi.sendPeerImage({
+        receiver_uid: activeItem.value.peerId,
+        contact_id: activeItem.value.conversation?.contact_id,
+        url,
+      });
+      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
+    }
   }
   await Promise.all([loadMessages(), loadConversations()]);
 }
 
-async function sendImage() {
+async function chooseImage() {
   if (!activeItem.value)
     return;
   const chooseResult = await uni.chooseImage({ count: 1 });
   const filePath = chooseResult.tempFilePaths[0];
   if (!filePath)
     return;
-  const url = await uploadImage(filePath);
-  if (activeItem.value.type === 'group') {
-    const message = await IMApi.sendGroupImage({ group_id: activeItem.value.peerId, url });
-    activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
-  }
-  else {
-    const message = await IMApi.sendPeerImage({
-      receiver_uid: activeItem.value.peerId,
-      contact_id: activeItem.value.conversation?.contact_id,
-      url,
-    });
-    activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
-  }
-  await Promise.all([loadMessages(), loadConversations()]);
+  pendingImagePath.value = filePath;
+}
+
+function previewPendingImage() {
+  if (pendingImagePath.value)
+    uni.previewImage({ urls: [pendingImagePath.value] });
+}
+
+function clearPendingImage() {
+  pendingImagePath.value = '';
 }
 
 async function recall(message: ChatMessage) {
@@ -879,6 +907,14 @@ onUnload(() => {
   font-size: 12px;
 }
 
+.row-image-preview {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  background: #eef2f7;
+  border-radius: 4px;
+}
+
 .tool-card {
   display: grid;
   gap: 10px;
@@ -1070,8 +1106,52 @@ onUnload(() => {
   height: 44px;
 }
 
-.composer-input {
+.composer-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.pending-image {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: #eef2f7;
+  border: 1px solid #d7dee9;
+  border-radius: 6px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.pending-image image {
+  display: block;
   width: 100%;
+  height: 100%;
+}
+
+.pending-remove {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  display: flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  line-height: 16px;
+  background: rgba(15, 23, 42, 0.72);
+  border-radius: 0 5px 0 6px;
+}
+
+.composer-input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
   min-height: 44px;
   max-height: 77px;
   padding: 10px 14px;

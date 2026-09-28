@@ -105,7 +105,7 @@ function back() {
 
 function imageUrl(message: ChatMessage) {
   const url = message.content.image_content?.url;
-  const raw = Array.isArray(url) ? url[0] : url;
+  const raw = Array.isArray(url) ? url[0] : typeof url === 'object' ? url?.url : url;
   if (!raw)
     return '';
   if (/^(https?:)?\/\//.test(raw) || /^(data|blob|file):/.test(raw))

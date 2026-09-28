@@ -73,7 +73,7 @@ export interface UserBasic {
 
 export interface MessageContent {
   text_content?: { content: string };
-  image_content?: { url: string | string[]; width?: number; height?: number };
+  image_content?: { url: string | string[] | { url?: string }; width?: number; height?: number };
 }
 
 export interface ChatMessage {
