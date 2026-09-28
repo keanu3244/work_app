@@ -5,7 +5,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 class AuthClient {
   AuthClient() {
     _dio.options
-      ..baseUrl = dotenv.env['BASE_URL'] ?? 'http://43.155.239.210:5556/api/v1'
+      ..baseUrl = dotenv.env['BASE_URL'] ??
+          'https://communication-backend.randomness.website/api/v1'
       ..connectTimeout = const Duration(seconds: 8)
       ..receiveTimeout = const Duration(seconds: 8);
   }
