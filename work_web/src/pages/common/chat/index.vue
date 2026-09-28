@@ -14,7 +14,7 @@
       <u-icon name="arrow-right" size="16" color="#8a94a6" />
     </view>
 
-    <scroll-view class="messages" :class="{ 'has-announcement': hasAnnouncement }" scroll-y :scroll-into-view="lastMessageId">
+    <scroll-view class="messages" :class="{ 'has-announcement': hasAnnouncement }" scroll-y :scroll-into-view="lastMessageId" :scroll-top="messageScrollTop">
       <view v-if="orderedMessages.length === 0" class="empty-chat">
         <view class="empty-title">开始聊天</view>
         <view class="empty-subtitle">给 {{ title }} 发送第一条消息</view>
@@ -89,6 +89,7 @@ const title = computed(() => options.value.title || '聊天');
 const messages = ref<ChatMessage[]>([]);
 const draft = ref('');
 const composing = ref(false);
+const messageScrollTop = ref(0);
 const announcement = ref('');
 const hasAnnouncement = computed(() => options.value.type === '2' && !!announcement.value);
 const lastMessageId = computed(() => {
@@ -98,6 +99,11 @@ const lastMessageId = computed(() => {
 const orderedMessages = computed(() => [...messages.value].reverse());
 let removePeerListener: (() => void) | null = null;
 let removeGroupListener: (() => void) | null = null;
+
+async function scrollMessagesToBottom() {
+  await nextTick();
+  messageScrollTop.value += 100000;
+}
 
 function back() {
   uni.navigateBack();
@@ -177,6 +183,7 @@ async function loadMessages() {
     return;
   }
   messages.value = res.list;
+  scrollMessagesToBottom();
   const last = res.list[0];
   if (!options.value.contact_id && last?.contact_id)
     options.value.contact_id = last.contact_id;

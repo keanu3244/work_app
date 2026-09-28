@@ -195,7 +195,7 @@
           <u-button size="small" type="primary" text="保存公告" @click="saveAnnouncement" />
         </view>
 
-        <scroll-view class="messages" scroll-y :scroll-into-view="lastMessageId">
+        <scroll-view class="messages" scroll-y :scroll-into-view="lastMessageId" :scroll-top="messageScrollTop">
           <view
             v-for="message in orderedMessages"
             :id="`msg-${message.msg_id}`"
@@ -298,6 +298,7 @@ const blocks = ref<UserBasic[]>([]);
 const activeItem = ref<ConversationItem | null>(null);
 const messages = ref<ChatMessage[]>([]);
 const draft = ref('');
+const messageScrollTop = ref(0);
 const friendUid = ref('');
 const groupName = ref('');
 const selectedGroupMemberUIDs = ref<string[]>([]);
@@ -393,6 +394,11 @@ const lastMessageId = computed(() => {
   return last ? `msg-${last.msg_id}` : '';
 });
 const createGroupButtonText = computed(() => `创建群聊${selectedGroupMemberUIDs.value.length ? `(${selectedGroupMemberUIDs.value.length})` : ''}`);
+
+async function scrollMessagesToBottom() {
+  await nextTick();
+  messageScrollTop.value += 100000;
+}
 
 function onContactTabClick(item: { index: number }) {
   contactTab.value = item.index;
@@ -504,6 +510,7 @@ async function loadMessages() {
       direction: 0,
     });
     messages.value = res.list;
+    scrollMessagesToBottom();
     const last = res.list[0];
     if (!activeItem.value.conversation && last?.contact_id)
       activeItem.value.conversation = { contact_id: last.contact_id } as Conversation;
