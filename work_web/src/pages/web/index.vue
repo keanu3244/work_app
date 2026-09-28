@@ -294,6 +294,8 @@ const announcementDraft = ref('');
 let removePeerListener: (() => void) | null = null;
 let removeGroupListener: (() => void) | null = null;
 let removeFriendListener: (() => void) | null = null;
+let workspaceLoaded = false;
+let lastReadReceiptKey = '';
 
 function friendName(friend: FriendItem) {
   return friend.remark || friend.nick || `用户 ${friend.uid}`;
@@ -468,6 +470,16 @@ async function loadWorkspace() {
   }
 }
 
+async function loadConversations() {
+  const res = await IMApi.conversations();
+  conversations.value = res.contacts;
+  if (activeItem.value) {
+    const fresh = conversationItems.value.find(item => item.key === activeItem.value?.key);
+    if (fresh)
+      activeItem.value = fresh;
+  }
+}
+
 async function loadMessages() {
   if (!activeItem.value)
     return;
@@ -483,7 +495,9 @@ async function loadMessages() {
     if (!activeItem.value.conversation && last?.contact_id)
       activeItem.value.conversation = { contact_id: last.contact_id } as Conversation;
     const contactId = activeItem.value.conversation?.contact_id || last?.contact_id;
-    if (contactId && last?.msg_id) {
+    const readReceiptKey = contactId && last?.msg_id ? `${contactId}:${last.msg_id}` : '';
+    if (readReceiptKey && readReceiptKey !== lastReadReceiptKey) {
+      lastReadReceiptKey = readReceiptKey;
       if (activeItem.value.type === 'group')
         await IMApi.groupRead({ contact_id: contactId, msg_id: last.msg_id });
       else
@@ -519,7 +533,7 @@ async function send() {
     });
     activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
   }
-  await Promise.all([loadMessages(), loadWorkspace()]);
+  await Promise.all([loadMessages(), loadConversations()]);
 }
 
 async function sendImage() {
@@ -542,7 +556,7 @@ async function sendImage() {
     });
     activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
   }
-  await Promise.all([loadMessages(), loadWorkspace()]);
+  await Promise.all([loadMessages(), loadConversations()]);
 }
 
 async function recall(message: ChatMessage) {
@@ -621,9 +635,19 @@ async function unblock(uid: string) {
 function bindRealtime() {
   if (removePeerListener)
     return;
-  const reloadActive = () => {
-    loadWorkspace();
-    loadMessages();
+  const reloadActive = (payload: any) => {
+    if (payload?.tp && payload.tp !== 'msg')
+      return;
+    const message = payload?.info || payload;
+    loadConversations();
+    const active = activeItem.value;
+    if (!active)
+      return;
+    const sameContact = message.contact_id && active.conversation?.contact_id && String(message.contact_id) === String(active.conversation.contact_id);
+    const samePeer = active.type === 'friend' && String(message.sender_uid) === active.peerId;
+    const sameGroup = active.type === 'group' && String(message.group_id) === active.peerId;
+    if (sameContact || samePeer || sameGroup)
+      loadMessages();
   };
   const reloadAll = () => loadWorkspace();
   uni.$on('im.peer', reloadActive);
@@ -647,8 +671,11 @@ onShow(() => {
   }
   setupRealtime();
   bindRealtime();
-  loadWorkspace();
-  loadBlocks();
+  if (!workspaceLoaded) {
+    workspaceLoaded = true;
+    loadWorkspace();
+    loadBlocks();
+  }
 });
 
 onUnload(() => {

@@ -65,7 +65,7 @@ export function setupRealtime() {
 
   socket = io(import.meta.env.VITE_API_BASE_URL.replace('/api/v1', ''), {
     path: '/socket.io/',
-    transports: ['websocket', 'polling'],
+    transports: ['websocket'],
     auth: { token },
     query: { uid: session.uid },
   });
