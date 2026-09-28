@@ -171,7 +171,7 @@
       </template>
     </section>
 
-    <main class="chat">
+    <main class="chat" :class="{ 'has-group-tools': showGroupTools && activeItem?.type === 'group' }">
       <template v-if="activeItem">
         <view class="chat-header">
           <view>
@@ -208,7 +208,7 @@
               <view v-if="activeItem.type === 'group' && !isMine(message)" class="sender-name">{{ senderName(message) }}</view>
               <view class="bubble">
                 <text v-if="message.status === 2">消息已撤回</text>
-                <image v-else-if="imageUrl(message)" class="chat-image" :src="imageUrl(message)" mode="widthFix" @click="previewImage(message)" />
+                <image v-else-if="imageUrl(message)" class="chat-image" :src="imageUrl(message)" mode="aspectFill" @click="previewImage(message)" />
                 <text v-else>{{ message.content.text_content?.content || '[非文本消息]' }}</text>
               </view>
               <u-button
@@ -234,7 +234,7 @@
           <textarea
             v-model="draft"
             class="composer-input"
-            placeholder="输入消息，Enter 发送，Shift + Enter 换行"
+            placeholder="Enter 发送，Shift + Enter 换行"
             :adjust-position="false"
             @keydown.enter.exact.prevent="send"
           />
@@ -328,7 +328,13 @@ function conversationTime(time?: number) {
 
 function imageUrl(message: ChatMessage) {
   const url = message.content.image_content?.url;
-  return Array.isArray(url) ? url[0] : url;
+  const raw = Array.isArray(url) ? url[0] : url;
+  if (!raw)
+    return '';
+  if (/^(https?:)?\/\//.test(raw) || /^(data|blob|file):/.test(raw))
+    return raw;
+  const apiURL = new URL(import.meta.env.VITE_API_BASE_URL);
+  return new URL(raw, apiURL.origin).toString();
 }
 
 function senderName(message: ChatMessage) {
@@ -657,6 +663,7 @@ onUnload(() => {
   display: grid;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   grid-template-columns: 220px 360px minmax(0, 1fr);
   overflow: hidden;
   color: #172033;
@@ -747,7 +754,10 @@ onUnload(() => {
 }
 
 .panel {
+  height: 100vh;
+  height: 100dvh;
   min-width: 0;
+  overflow: hidden;
   background: #f8fafc;
   border-right: 1px solid #dfe5ee;
 }
@@ -783,10 +793,13 @@ onUnload(() => {
 
 .list-scroll {
   height: calc(100vh - 76px);
+  height: calc(100dvh - 76px);
+  overflow: hidden;
 }
 
 .list-scroll.with-tabs {
   height: calc(100vh - 120px);
+  height: calc(100dvh - 120px);
 }
 
 .conversation-row,
@@ -915,22 +928,42 @@ onUnload(() => {
 }
 
 .chat {
+  --chat-header-height: 76px;
+  --composer-height: 100px;
+  --group-tools-height: 0px;
   display: grid;
+  height: 100vh;
+  height: 100dvh;
   min-width: 0;
+  min-height: 0;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
   background: #f3f6fb;
+  ::placeholder{
+    font-size: small;
+  }
+}
+
+.chat.has-group-tools {
+  --group-tools-height: 154px;
 }
 
 .group-tools {
   display: grid;
   gap: 10px;
+  height: var(--group-tools-height);
   padding: 12px 18px;
+  overflow: hidden;
   background: #fff;
   border-bottom: 1px solid #e5eaf2;
+  box-sizing: border-box;
 }
 
 .messages {
+  display: block;
+  height: calc(100dvh - var(--chat-header-height) - var(--group-tools-height) - var(--composer-height));
   min-height: 0;
+  overflow: hidden;
   padding: 20px 24px;
   box-sizing: border-box;
 }
@@ -981,8 +1014,12 @@ onUnload(() => {
 
 .chat-image {
   display: block;
-  max-width: 240px;
+  width: 240px;
+  height: 180px;
+  max-width: 44vw;
+  max-height: 42vh;
   border-radius: 6px;
+  background: #eef2f7;
 }
 
 .recall-btn {
@@ -1009,7 +1046,7 @@ onUnload(() => {
 .composer-input {
   width: 100%;
   min-height: 44px;
-  max-height: 92px;
+  max-height: 77px;
   padding: 10px 14px;
   color: #172033;
   font-size: 15px;
@@ -1030,7 +1067,7 @@ onUnload(() => {
 
 .blank-chat {
   display: flex;
-  min-height: 100vh;
+  min-height: 100%;
   align-items: center;
   justify-content: center;
 }

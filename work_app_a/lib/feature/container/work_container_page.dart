@@ -48,8 +48,8 @@ class _WorkContainerPageState extends State<WorkContainerPage> {
   }
 
   String get _launchUrl {
-    final raw =
-        dotenv.env['WORK_APP_B_URL'] ?? 'http://43.155.239.210/work-app-b/';
+    final raw = dotenv.env['WORK_APP_B_URL'] ??
+        'https://communication.randomness.website/#/';
     final uri = Uri.parse(raw);
     return uri.replace(
       queryParameters: {

@@ -1,6 +1,8 @@
 const TokenKey = 'admin-token';
 const SessionKey = 'work-app-session';
 const TokenPrefix = 'Bearer ';
+const LoginPath = '/pages/common/login/index';
+let redirectingToLogin = false;
 
 function readJwtClaim(token: string, key: string) {
   const parts = token.split('.');
@@ -28,6 +30,18 @@ function setToken(token: string) {
 function clearToken() {
   uni.removeStorageSync(TokenKey);
   uni.removeStorageSync(SessionKey);
+}
+function logoutToLogin() {
+  clearToken();
+  if (redirectingToLogin)
+    return;
+  redirectingToLogin = true;
+  uni.reLaunch({
+    url: LoginPath,
+    complete: () => {
+      redirectingToLogin = false;
+    },
+  });
 }
 function setSession(session: WorkSession) {
   uni.setStorageSync(SessionKey, session);
@@ -76,4 +90,4 @@ export interface AuthSessionPayload {
   nick: string;
 }
 
-export { bootstrapSession, clearToken, getSession, getToken, isLogin, setAuthSession, setSession, setToken, TokenPrefix };
+export { bootstrapSession, clearToken, getSession, getToken, isLogin, logoutToLogin, setAuthSession, setSession, setToken, TokenPrefix };
