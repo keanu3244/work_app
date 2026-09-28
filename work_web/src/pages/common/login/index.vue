@@ -22,7 +22,7 @@
 
 <script setup lang="ts">
 import { UserApi } from '@/api';
-import { HOME_PATH, LOGIN_PATH, removeQueryString } from '@/router';
+import { ERROR404_PATH, HOME_PATH, isPathExists, LOGIN_PATH, removeQueryString } from '@/router';
 import { setupRealtime } from '@/services/realtime';
 import { setAuthSession } from '@/utils/auth';
 
@@ -39,6 +39,16 @@ const submitText = computed(() => mode.value === 'login' ? '登录' : '注册并
 
 function onModeClick(item: { index: number }) {
   mode.value = item.index === 0 ? 'login' : 'register';
+}
+
+function normalizeRedirect(value?: string) {
+  if (!value)
+    return HOME_PATH;
+  const path = decodeURIComponent(value);
+  const cleanPath = removeQueryString(path);
+  if (cleanPath === LOGIN_PATH || cleanPath === ERROR404_PATH || !isPathExists(path))
+    return HOME_PATH;
+  return path;
 }
 
 function validForm() {
@@ -78,8 +88,7 @@ async function submit() {
 }
 
 onLoad((options: any) => {
-  if (options.redirect && removeQueryString(options.redirect) !== LOGIN_PATH)
-    redirect = decodeURIComponent(options.redirect);
+  redirect = normalizeRedirect(options.redirect);
 });
 </script>
 

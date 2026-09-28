@@ -4,7 +4,7 @@ import type {
   HttpRequestConfig,
   HttpResponse,
 } from 'uview-plus/libs/luch-request/index';
-import { clearToken, getToken } from '@/utils/auth';
+import { getToken, logoutToLogin } from '@/utils/auth';
 import storage from '@/utils/storage';
 import { showMessage } from './status';
 
@@ -91,8 +91,8 @@ function responseInterceptors(http: HttpRequestAbstract) {
     const custom = config?.custom;
 
     // 登录状态失效，重新登录
-    if (response.statusCode === 401 || data.code === 401) {
-      clearToken();
+    if (response.statusCode === 401 || data?.code === 401) {
+      logoutToLogin();
       return Promise.reject(data);
     }
 
@@ -121,6 +121,9 @@ function responseInterceptors(http: HttpRequestAbstract) {
     if (custom?.loading !== false) {
       uni.hideLoading();
     }
+
+    if (response.statusCode === 401)
+      logoutToLogin();
 
     // 如果没有显式定义custom的toast参数为false的话，默认对报错进行toast弹出提示
     if (custom?.toast !== false) {

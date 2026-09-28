@@ -52,7 +52,7 @@
 <script setup lang="ts">
 import type { CSSProperties } from 'vue';
 import uCode from 'uview-plus/components/u-code/u-code.vue';
-import { HOME_PATH, isTabBarPath, LOGIN_PATH, removeQueryString } from '@/router';
+import { ERROR404_PATH, HOME_PATH, isPathExists, isTabBarPath, LOGIN_PATH, removeQueryString } from '@/router';
 import { setToken } from '@/utils/auth';
 // import { useUserStore } from '@/store';
 
@@ -93,6 +93,17 @@ function getCode() {
     uni.$u.toast('倒计时结束后再发送');
   }
 }
+
+function normalizeRedirect(value?: string) {
+  if (!value)
+    return HOME_PATH;
+  const path = decodeURIComponent(value);
+  const cleanPath = removeQueryString(path);
+  if (cleanPath === LOGIN_PATH || cleanPath === ERROR404_PATH || !isPathExists(path))
+    return HOME_PATH;
+  return path;
+}
+
 async function submit() {
   if (!uni.$u.test.mobile(Number(tel.value))) {
     uni.$u.toast('请输入正确的手机号');
@@ -117,9 +128,7 @@ async function submit() {
 }
 
 onLoad((options: any) => {
-  if (options.redirect && removeQueryString(options.redirect) !== LOGIN_PATH) {
-    redirect = decodeURIComponent(options.redirect);
-  }
+  redirect = normalizeRedirect(options.redirect);
 });
 </script>
 

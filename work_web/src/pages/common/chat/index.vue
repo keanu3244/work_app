@@ -37,7 +37,7 @@
           <view v-if="options.type === '2' && !isMine(message)" class="sender-name">{{ senderName(message) }}</view>
           <view class="bubble" @longpress="recall(message)">
             <text v-if="message.status === 2">消息已撤回</text>
-            <image v-else-if="imageUrl(message)" class="chat-image" :src="imageUrl(message)" mode="widthFix" @click="previewImage(message)" />
+            <image v-else-if="imageUrl(message)" class="chat-image" :src="imageUrl(message)" mode="aspectFill" @click="previewImage(message)" />
             <text v-else>{{ message.content.text_content?.content || '[非文本消息]' }}</text>
           </view>
           <u-button
@@ -105,7 +105,13 @@ function back() {
 
 function imageUrl(message: ChatMessage) {
   const url = message.content.image_content?.url;
-  return Array.isArray(url) ? url[0] : url;
+  const raw = Array.isArray(url) ? url[0] : url;
+  if (!raw)
+    return '';
+  if (/^(https?:)?\/\//.test(raw) || /^(data|blob|file):/.test(raw))
+    return raw;
+  const apiURL = new URL(import.meta.env.VITE_API_BASE_URL);
+  return new URL(raw, apiURL.origin).toString();
 }
 
 function canRecall(message: ChatMessage) {
@@ -290,13 +296,19 @@ onUnload(() => {
 
 <style scoped lang="scss">
 .chat-page {
-  min-height: 100vh;
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
   padding-top: env(safe-area-inset-top);
+  overflow: hidden;
   background: #f6f7fb;
   box-sizing: border-box;
 }
 
 .chat-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -326,16 +338,21 @@ onUnload(() => {
 }
 
 .messages {
-  height: calc(100vh - 56px - 66px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  display: block;
+  flex: 0 0 auto;
+  height: calc(100dvh - 56px - 61px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  min-height: 0;
+  overflow: hidden;
   padding: 16px 12px;
   box-sizing: border-box;
 }
 
 .messages.has-announcement {
-  height: calc(100vh - 56px - 45px - 66px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  height: calc(100dvh - 56px - 45px - 61px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
 }
 
 .announcement-bar {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -410,10 +427,7 @@ onUnload(() => {
 }
 
 .composer {
-  position: fixed;
-  right: 0;
-  bottom: 0;
-  left: 0;
+  flex: 0 0 auto;
   z-index: 10;
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) 76px;
@@ -447,8 +461,12 @@ onUnload(() => {
 
 .chat-image {
   display: block;
-  max-width: 180px;
+  width: 180px;
+  height: 135px;
+  max-width: 52vw;
+  max-height: 40vh;
   border-radius: 6px;
+  background: #eef2f7;
 }
 
 .recall-btn {

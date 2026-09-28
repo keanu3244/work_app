@@ -1,5 +1,5 @@
 import { post } from '@/utils/request';
-import { getToken } from '@/utils/auth';
+import { getToken, logoutToLogin } from '@/utils/auth';
 
 function apiBaseURL() {
   // #ifdef H5
@@ -11,6 +11,10 @@ function apiBaseURL() {
 
 function parseIMPayload(text: string) {
   return JSON.parse(text.replace(/:\s*(-?\d{16,})(?=\s*[,}\]])/g, ':"$1"'));
+}
+
+function isUnauthorizedCode(code: unknown) {
+  return Number(code) === 401;
 }
 
 function buildIMURL(url: string, params?: Record<string, string | number | undefined>) {
@@ -28,7 +32,13 @@ async function getRawJson<T>(url: string, params?: Record<string, string | numbe
       Authorization: `Bearer ${getToken()}`,
     },
   });
+  if (response.status === 401) {
+    logoutToLogin();
+    throw new Error('登录已失效');
+  }
   const payload = parseIMPayload(await response.text());
+  if (isUnauthorizedCode(payload.code))
+    logoutToLogin();
   if (payload.code !== 0)
     throw payload;
   return payload.data as T;
@@ -43,7 +53,13 @@ async function postRawJson<T>(url: string, body: string) {
     },
     body,
   });
+  if (response.status === 401) {
+    logoutToLogin();
+    throw new Error('登录已失效');
+  }
   const payload = parseIMPayload(await response.text());
+  if (isUnauthorizedCode(payload.code))
+    logoutToLogin();
   if (payload.code !== 0)
     throw payload;
   return payload.data as T;
@@ -203,7 +219,13 @@ export async function uploadImage(filePath: string) {
     },
     body: blob,
   });
+  if (uploadResponse.status === 401) {
+    logoutToLogin();
+    throw new Error('登录已失效');
+  }
   const payload = await uploadResponse.json();
+  if (isUnauthorizedCode(payload.code))
+    logoutToLogin();
   if (payload.code !== 0)
     throw payload;
   return payload.data.url as string;
