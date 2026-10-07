@@ -38,6 +38,13 @@
           <view class="bubble" @longpress="recall(message)">
             <text v-if="message.status === 2">消息已撤回</text>
             <image v-else-if="imageUrl(message)" class="chat-image" :src="imageUrl(message)" mode="aspectFill" @click="previewImage(message)" />
+            <view v-else-if="message.content.file_content" class="file-card" @click="downloadFile(message.content.file_content.url, message.content.file_content.name)">
+              <view class="file-icon">FILE</view>
+              <view class="file-main">
+                <text class="file-name">{{ message.content.file_content.name }}</text>
+                <text class="file-size">{{ formatFileSize(message.content.file_content.size) }}</text>
+              </view>
+            </view>
             <text v-else>{{ message.content.text_content?.content || '[非文本消息]' }}</text>
           </view>
           <u-button
@@ -59,6 +66,11 @@
 
     <view class="composer">
       <u-button class="tool-button" text="+" @click="sendImage" />
+      <u-button class="tool-button" text="文件" @click="chooseFile" />
+      <view v-if="pendingFile" class="pending-file" @click="openLocalFile">
+        <text class="pending-file-name">{{ pendingFile.name }}</text>
+        <text class="pending-file-remove" @click.stop="clearPendingFile">×</text>
+      </view>
       <textarea
         v-model="draft"
         class="composer-input"
@@ -72,7 +84,7 @@
         @compositionstart="onCompositionStart"
         @compositionend="onCompositionEnd"
       />
-      <u-button type="primary" text="发送" @tap="send" @click="send" />
+      <u-button class="send-button" type="primary" text="发送" @tap="send" @click="send" />
     </view>
   </view>
 </template>
@@ -80,7 +92,7 @@
 <script setup lang="ts">
 import type { ChatMessage } from '@/api/im';
 import { IMApi } from '@/api';
-import { uploadImage } from '@/api/im';
+import { uploadChatFile, uploadImage } from '@/api/im';
 import { getSession } from '@/utils/auth';
 
 const session = computed(() => getSession());
@@ -91,6 +103,7 @@ const draft = ref('');
 const composing = ref(false);
 const messageScrollTop = ref(0);
 const announcement = ref('');
+const pendingFile = ref<File | null>(null);
 const hasAnnouncement = computed(() => options.value.type === '2' && !!announcement.value);
 const lastMessageId = computed(() => {
   const last = orderedMessages.value[orderedMessages.value.length - 1];
@@ -118,6 +131,45 @@ function imageUrl(message: ChatMessage) {
     return raw;
   const apiURL = new URL(import.meta.env.VITE_API_BASE_URL);
   return new URL(raw, apiURL.origin).toString();
+}
+
+function fileUrl(raw?: string) {
+  if (!raw)
+    return '';
+  if (/^(https?:)?\/\//.test(raw) || /^(data|blob|file):/.test(raw))
+    return raw;
+  const apiURL = new URL(import.meta.env.VITE_API_BASE_URL);
+  return new URL(raw, apiURL.origin).toString();
+}
+
+function formatFileSize(size?: number) {
+  if (!size)
+    return '0 B';
+  if (size < 1024)
+    return `${size} B`;
+  if (size < 1024 * 1024)
+    return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function downloadFile(url?: string, name?: string) {
+  const rawTarget = fileUrl(url);
+  if (!rawTarget)
+    return;
+  const target = new URL(rawTarget);
+  target.searchParams.set('download', '1');
+  if (name)
+    target.searchParams.set('filename', name);
+  const link = document.createElement('a');
+  link.href = target.toString();
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.click();
+}
+
+function openLocalFile() {
+  if (pendingFile.value)
+    window.open(URL.createObjectURL(pendingFile.value), '_blank');
 }
 
 function canRecall(message: ChatMessage) {
@@ -218,22 +270,51 @@ async function send() {
   if (composing.value)
     return;
   const text = draft.value.trim();
-  if (!text)
+  const file = pendingFile.value;
+  if (!text && !file)
     return;
   draft.value = '';
+  pendingFile.value = null;
   if (options.value.type === '2') {
-    const message = await IMApi.sendGroup({ group_id: options.value.peer_id, text });
-    options.value.contact_id = message.contact_id || options.value.contact_id;
+    if (text) {
+      const message = await IMApi.sendGroup({ group_id: options.value.peer_id, text });
+      options.value.contact_id = message.contact_id || options.value.contact_id;
+    }
+    if (file) {
+      const uploaded = await uploadChatFile(file);
+      const message = await IMApi.sendGroupFile({ group_id: options.value.peer_id, file: uploaded });
+      options.value.contact_id = message.contact_id || options.value.contact_id;
+    }
   }
   else {
-    const message = await IMApi.sendPeer({
-      receiver_uid: options.value.peer_id,
-      contact_id: options.value.contact_id,
-      text,
-    });
-    options.value.contact_id = message.contact_id || options.value.contact_id;
+    if (text) {
+      const message = await IMApi.sendPeer({
+        receiver_uid: options.value.peer_id,
+        contact_id: options.value.contact_id,
+        text,
+      });
+      options.value.contact_id = message.contact_id || options.value.contact_id;
+    }
+    if (file) {
+      const uploaded = await uploadChatFile(file);
+      const message = await IMApi.sendPeerFile({
+        receiver_uid: options.value.peer_id,
+        contact_id: options.value.contact_id,
+        file: uploaded,
+      });
+      options.value.contact_id = message.contact_id || options.value.contact_id;
+    }
   }
   await loadMessages();
+}
+
+async function chooseFile() {
+  const result = await (uni as any).chooseFile({ count: 1 });
+  pendingFile.value = result.tempFiles?.[0]?.file || result.tempFiles?.[0] || null;
+}
+
+function clearPendingFile() {
+  pendingFile.value = null;
 }
 
 async function sendImage() {
@@ -437,7 +518,8 @@ onUnload(() => {
   flex: 0 0 auto;
   z-index: 10;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 76px;
+  grid-template-columns: 42px 52px minmax(0, 1fr) 76px;
+  grid-template-rows: auto auto;
   align-items: center;
   gap: 8px;
   padding: 9px 12px calc(9px + env(safe-area-inset-bottom));
@@ -447,7 +529,38 @@ onUnload(() => {
   box-sizing: border-box;
 }
 
+.pending-file {
+  grid-column: 3 / 4;
+  grid-row: 2 / 3;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  background: #eef2f7;
+  border: 1px solid #d7dee9;
+  border-radius: 6px;
+}
+
+.pending-file-name {
+  overflow: hidden;
+  flex: 1;
+  color: #172033;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-file-remove {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  color: #8a94a6;
+  font-size: 16px;
+}
+
 .composer-input {
+  grid-column: 3 / 4;
+  grid-row: 1 / 2;
   min-height: 42px;
   max-height: 88px;
   padding: 9px 12px;
@@ -464,6 +577,12 @@ onUnload(() => {
 .tool-button {
   width: 42px;
   height: 42px;
+  grid-row: 1 / 3;
+}
+
+.send-button {
+  grid-column: 4 / 5;
+  grid-row: 1 / 3;
 }
 
 .chat-image {
@@ -474,6 +593,49 @@ onUnload(() => {
   max-height: 40vh;
   border-radius: 6px;
   background: #eef2f7;
+}
+
+.file-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(240px, 58vw);
+  cursor: pointer;
+}
+
+.file-icon {
+  display: flex;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: #2563eb;
+  font-size: 10px;
+  font-weight: 700;
+  background: #eaf2ff;
+  border-radius: 6px;
+}
+
+.file-main {
+  display: grid;
+  min-width: 0;
+}
+
+.file-name,
+.file-size {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-name {
+  font-size: 14px;
+}
+
+.file-size {
+  color: #8a94a6;
+  font-size: 12px;
 }
 
 .recall-btn {

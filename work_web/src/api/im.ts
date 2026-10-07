@@ -74,6 +74,7 @@ export interface UserBasic {
 export interface MessageContent {
   text_content?: { content: string };
   image_content?: { url: string | string[] | { url?: string }; width?: number; height?: number };
+  file_content?: { url: string; name: string; size: number; mime?: string };
 }
 
 export interface ChatMessage {
@@ -135,6 +136,15 @@ export interface FriendRequestItem {
   create_time: number;
 }
 
+export interface FileMessagePayload {
+  url: string;
+  name: string;
+  size: number;
+  mime?: string;
+}
+
+const DIRECT_UPLOAD_THRESHOLD = 20 * 1024 * 1024;
+
 export const IMApi = {
   conversations: () => getRawJson<{ contacts: Conversation[]; has_more: number }>('/im/conversations', { size: 50, direction: 0 }),
   messages: (params: { contact_id?: string; peer_id?: string; msg_id?: string; direction?: number }) =>
@@ -148,6 +158,16 @@ export const IMApi = {
     postRawJson<ChatMessage>(
       '/im/messages/send',
       `{"receiver_uid":${data.receiver_uid},"contact_id":${JSON.stringify(data.contact_id || '')},"msg_type":2,"content":{"image_content":{"url":${JSON.stringify(data.url)}}}}`,
+    ),
+  sendPeerFile: (data: { receiver_uid: string; contact_id?: string; file: FileMessagePayload }) =>
+    postRawJson<ChatMessage>(
+      '/im/messages/send',
+      JSON.stringify({
+        receiver_uid: Number(data.receiver_uid),
+        contact_id: data.contact_id || '',
+        msg_type: 12,
+        content: { file_content: data.file },
+      }),
     ),
   sendGroup: (data: { group_id: string; text: string }) =>
     post<ChatMessage>('/im/messages/group/send', {
@@ -163,6 +183,14 @@ export const IMApi = {
         group_id: data.group_id,
         msg_type: 2,
         content: { image_content: { url: data.url } },
+      },
+    }),
+  sendGroupFile: (data: { group_id: string; file: FileMessagePayload }) =>
+    post<ChatMessage>('/im/messages/group/send', {
+      data: {
+        group_id: data.group_id,
+        msg_type: 12,
+        content: { file_content: data.file },
       },
     }),
   recallPeer: (data: { contact_id: string; msg_id: string }) =>
@@ -207,6 +235,83 @@ export const IMApi = {
     post('/im/push/token', { data }),
   deletePushToken: (token: string) => post('/im/push/token/delete', { data: { token } }),
 };
+
+function fileSuffix(name: string) {
+  return name.includes('.') ? name.split('.').pop()!.toLowerCase() : 'bin';
+}
+
+async function parseUploadPayload(response: Response) {
+  if (response.status === 401) {
+    logoutToLogin();
+    throw new Error('登录已失效');
+  }
+  const payload = await response.json();
+  if (isUnauthorizedCode(payload.code))
+    logoutToLogin();
+  if (payload.code !== 0)
+    throw payload;
+  return payload.data;
+}
+
+async function putObject(url: string, body: Blob, headers: Record<string, string>) {
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers,
+    body,
+  });
+  if (!response.ok)
+    throw new Error(`上传失败 ${response.status}`);
+}
+
+async function proxyUploadFile(file: File) {
+  const suffix = fileSuffix(file.name);
+  const response = await fetch(`${apiBaseURL()}/upload/file?sufix=.${suffix}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      'Content-Type': file.type || 'application/octet-stream',
+    },
+    body: file,
+  });
+  const data = await parseUploadPayload(response);
+  return data.file_url || data.url;
+}
+
+async function directUploadFile(file: File) {
+  const suffix = fileSuffix(file.name);
+  const presignResponse = await fetch(`${apiBaseURL()}/upload/presign`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sufix: suffix, size: file.size }),
+  });
+  const presign = await parseUploadPayload(presignResponse);
+  await putObject(presign.upload_url, file, presign.headers || {});
+  const confirmResponse = await fetch(`${apiBaseURL()}/upload/confirm`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ key: presign.key, size: file.size }),
+  });
+  const confirmed = await parseUploadPayload(confirmResponse);
+  return confirmed.file_url || presign.file_url;
+}
+
+export async function uploadChatFile(file: File): Promise<FileMessagePayload> {
+  const url = file.size <= DIRECT_UPLOAD_THRESHOLD
+    ? await proxyUploadFile(file)
+    : await directUploadFile(file);
+  return {
+    url,
+    name: file.name,
+    size: file.size,
+    mime: file.type || 'application/octet-stream',
+  };
+}
 
 export async function uploadImage(filePath: string) {
   const response = await fetch(filePath);

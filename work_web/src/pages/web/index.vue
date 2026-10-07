@@ -215,6 +215,13 @@
               <view class="bubble">
                 <text v-if="message.status === 2">消息已撤回</text>
                 <image v-else-if="imageUrl(message)" class="chat-image" :src="imageUrl(message)" mode="aspectFill" @click="previewImage(message)" />
+                <view v-else-if="message.content.file_content" class="file-card" @click="downloadFile(message.content.file_content.url, message.content.file_content.name)">
+                  <view class="file-icon">FILE</view>
+                  <view class="file-main">
+                    <text class="file-name">{{ message.content.file_content.name }}</text>
+                    <text class="file-size">{{ formatFileSize(message.content.file_content.size) }}</text>
+                  </view>
+                </view>
                 <text v-else>{{ message.content.text_content?.content || '[非文本消息]' }}</text>
               </view>
               <u-button
@@ -237,10 +244,15 @@
 
         <view class="composer">
           <u-button class="icon-button" text="+" @click="chooseImage" />
+          <u-button class="file-button" text="文件" @click="chooseFile" />
           <view class="composer-main">
             <view v-if="pendingImagePath" class="pending-image" @click="previewPendingImage">
               <image :src="pendingImagePath" mode="aspectFill" />
               <text class="pending-remove" @click.stop="clearPendingImage">×</text>
+            </view>
+            <view v-if="pendingFile" class="pending-file" @click="openLocalFile">
+              <text class="pending-file-name">{{ pendingFile.name }}</text>
+              <text class="pending-remove" @click.stop="clearPendingFile">×</text>
             </view>
             <textarea
               v-model="draft"
@@ -262,7 +274,7 @@
 
 <script setup lang="ts">
 import type { ChatMessage, Conversation, FriendItem, FriendRequestItem, GroupInfo, UserBasic } from '@/api/im';
-import { IMApi, uploadImage } from '@/api/im';
+import { IMApi, uploadChatFile, uploadImage } from '@/api/im';
 import { disconnectRealtime, setupRealtime } from '@/services/realtime';
 import { clearToken, getSession, isLogin } from '@/utils/auth';
 
@@ -305,6 +317,7 @@ const selectedGroupMemberUIDs = ref<string[]>([]);
 const showGroupTools = ref(false);
 const announcementDraft = ref('');
 const pendingImagePath = ref('');
+const pendingFile = ref<File | null>(null);
 let removePeerListener: (() => void) | null = null;
 let removeGroupListener: (() => void) | null = null;
 let removeFriendListener: (() => void) | null = null;
@@ -332,7 +345,7 @@ function messagePreview(message?: ChatMessage) {
     return '暂无消息';
   if (message.status === 2)
     return '消息已撤回';
-  return message.content.text_content?.content || (message.content.image_content ? '[图片]' : '[非文本消息]');
+  return message.content.text_content?.content || (message.content.image_content ? '[图片]' : message.content.file_content ? '[文件]' : '[非文本消息]');
 }
 
 function conversationTime(time?: number) {
@@ -351,6 +364,45 @@ function imageUrl(message?: ChatMessage) {
     return raw;
   const apiURL = new URL(import.meta.env.VITE_API_BASE_URL);
   return new URL(raw, apiURL.origin).toString();
+}
+
+function fileUrl(raw?: string) {
+  if (!raw)
+    return '';
+  if (/^(https?:)?\/\//.test(raw) || /^(data|blob|file):/.test(raw))
+    return raw;
+  const apiURL = new URL(import.meta.env.VITE_API_BASE_URL);
+  return new URL(raw, apiURL.origin).toString();
+}
+
+function formatFileSize(size?: number) {
+  if (!size)
+    return '0 B';
+  if (size < 1024)
+    return `${size} B`;
+  if (size < 1024 * 1024)
+    return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function downloadFile(url?: string, name?: string) {
+  const rawTarget = fileUrl(url);
+  if (!rawTarget)
+    return;
+  const target = new URL(rawTarget);
+  target.searchParams.set('download', '1');
+  if (name)
+    target.searchParams.set('filename', name);
+  const link = document.createElement('a');
+  link.href = target.toString();
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.click();
+}
+
+function openLocalFile() {
+  if (pendingFile.value)
+    window.open(URL.createObjectURL(pendingFile.value), '_blank');
 }
 
 function senderName(message: ChatMessage) {
@@ -539,10 +591,12 @@ async function loadMessages() {
 async function send() {
   const text = draft.value.trim();
   const imagePath = pendingImagePath.value;
-  if ((!text && !imagePath) || !activeItem.value)
+  const file = pendingFile.value;
+  if ((!text && !imagePath && !file) || !activeItem.value)
     return;
   draft.value = '';
   pendingImagePath.value = '';
+  pendingFile.value = null;
   if (text) {
     if (activeItem.value.type === 'group') {
       const message = await IMApi.sendGroup({ group_id: activeItem.value.peerId, text });
@@ -572,6 +626,21 @@ async function send() {
       activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
     }
   }
+  if (file) {
+    const uploaded = await uploadChatFile(file);
+    if (activeItem.value.type === 'group') {
+      const message = await IMApi.sendGroupFile({ group_id: activeItem.value.peerId, file: uploaded });
+      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
+    }
+    else {
+      const message = await IMApi.sendPeerFile({
+        receiver_uid: activeItem.value.peerId,
+        contact_id: activeItem.value.conversation?.contact_id,
+        file: uploaded,
+      });
+      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
+    }
+  }
   await Promise.all([loadMessages(), loadConversations()]);
 }
 
@@ -592,6 +661,17 @@ function previewPendingImage() {
 
 function clearPendingImage() {
   pendingImagePath.value = '';
+}
+
+async function chooseFile() {
+  if (!activeItem.value)
+    return;
+  const result = await (uni as any).chooseFile({ count: 1 });
+  pendingFile.value = result.tempFiles?.[0]?.file || result.tempFiles?.[0] || null;
+}
+
+function clearPendingFile() {
+  pendingFile.value = null;
 }
 
 async function recall(message: ChatMessage) {
@@ -1092,13 +1172,56 @@ onUnload(() => {
   background: #eef2f7;
 }
 
+.file-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(300px, 44vw);
+  cursor: pointer;
+}
+
+.file-icon {
+  display: flex;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: #2563eb;
+  font-size: 10px;
+  font-weight: 700;
+  background: #eaf2ff;
+  border-radius: 6px;
+}
+
+.file-main {
+  display: grid;
+  min-width: 0;
+}
+
+.file-name,
+.file-size {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-name {
+  font-size: 14px;
+}
+
+.file-size {
+  color: #8a94a6;
+  font-size: 12px;
+}
+
 .recall-btn {
   margin-top: 4px;
 }
 
 .composer {
   display: grid;
-  grid-template-columns: 44px minmax(180px, 720px) 96px;
+  grid-template-columns: 44px 60px minmax(180px, 720px) 96px;
   gap: 8px;
   align-items: center;
   justify-content: center;
@@ -1110,6 +1233,11 @@ onUnload(() => {
 
 .icon-button {
   width: 44px;
+  height: 44px;
+}
+
+.file-button {
+  width: 60px;
   height: 44px;
 }
 
@@ -1137,6 +1265,30 @@ onUnload(() => {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.pending-file {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 96px;
+  max-width: 180px;
+  height: 44px;
+  padding: 0 22px 0 10px;
+  overflow: hidden;
+  background: #eef2f7;
+  border: 1px solid #d7dee9;
+  border-radius: 6px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.pending-file-name {
+  overflow: hidden;
+  color: #172033;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pending-remove {

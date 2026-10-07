@@ -10,7 +10,7 @@ function linkMessage(payload: any) {
 function messageText(message: any) {
   if (message?.status === 2)
     return '消息已撤回';
-  return message?.content?.text_content?.content || (message?.content?.image_content ? '[图片]' : '你收到一条新消息');
+  return message?.content?.text_content?.content || (message?.content?.image_content ? '[图片]' : message?.content?.file_content ? '[文件]' : '你收到一条新消息');
 }
 
 function notify(title: string, body: string) {
