@@ -22,10 +22,11 @@
         class="announcement-input"
         placeholder="填写群公告"
         :maxlength="500"
+        :disabled="saving"
       />
       <view class="editor-actions">
-        <u-button text="取消" @click="cancelEdit" />
-        <u-button type="primary" text="发布" @click="saveAnnouncement" />
+        <u-button text="取消" :disabled="saving" @click="cancelEdit" />
+        <u-button type="primary" text="发布" :loading="saving" :disabled="saving" @click="saveAnnouncement" />
       </view>
     </view>
   </view>
@@ -40,6 +41,7 @@ const groupTitle = ref('');
 const announcement = ref('');
 const draft = ref('');
 const editing = ref(false);
+const saving = ref(false);
 const session = computed(() => getSession());
 const authorName = computed(() => session.value?.nick || '我');
 const currentTime = computed(() => {
@@ -54,12 +56,23 @@ function cancelEdit() {
 
 async function saveAnnouncement() {
   const value = draft.value.trim();
+  if (saving.value)
+    return;
   if (!value)
     return uni.$u.toast('请输入群公告');
-  await IMApi.updateGroup({ group_id: groupId.value, announcement: value });
-  announcement.value = value;
-  editing.value = false;
-  uni.$u.toast('已发布');
+  saving.value = true;
+  try {
+    await IMApi.updateGroup({ group_id: groupId.value, announcement: value });
+    announcement.value = value;
+    editing.value = false;
+    uni.$u.toast('已发布');
+  }
+  catch (error: any) {
+    uni.$u.toast(error?.message || '发布失败');
+  }
+  finally {
+    saving.value = false;
+  }
 }
 
 onLoad((query) => {

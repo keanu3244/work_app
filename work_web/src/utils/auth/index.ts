@@ -32,6 +32,7 @@ function clearToken() {
   uni.removeStorageSync(SessionKey);
 }
 function logoutToLogin() {
+  uni.$emit('auth.logout');
   clearToken();
   if (redirectingToLogin)
     return;

@@ -69,6 +69,8 @@ const friendUid = ref('');
 const selectedGroupMemberUIDs = ref<string[]>([]);
 let removeFriendListener: (() => void) | null = null;
 let removeGroupListener: (() => void) | null = null;
+let listRequestID = 0;
+let pageActive = false;
 
 function onTabClick(item: { index: number }) {
   current.value = item.index;
@@ -148,14 +150,23 @@ function defaultGroupName() {
 }
 
 async function loadAll() {
-  const [friendRes, requestRes, groupRes] = await Promise.all([
-    IMApi.friends(),
-    IMApi.friendRequests('inbox'),
-    IMApi.groups(),
-  ]);
-  friends.value = friendRes.list;
-  requests.value = requestRes.list;
-  groups.value = groupRes.list;
+  const requestID = ++listRequestID;
+  try {
+    const [friendRes, requestRes, groupRes] = await Promise.all([
+      IMApi.friends(),
+      IMApi.friendRequests('inbox'),
+      IMApi.groups(),
+    ]);
+    if (!pageActive || requestID !== listRequestID)
+      return;
+    friends.value = friendRes.list;
+    requests.value = requestRes.list;
+    groups.value = groupRes.list;
+  }
+  catch (error: any) {
+    if (pageActive && requestID === listRequestID)
+      uni.$u.toast(error?.message || '加载通讯录失败');
+  }
 }
 
 function bindRealtime() {
@@ -169,11 +180,14 @@ function bindRealtime() {
 }
 
 onShow(() => {
+  pageActive = true;
   bindRealtime();
   loadAll();
 });
 
 onUnload(() => {
+  pageActive = false;
+  listRequestID += 1;
   removeFriendListener?.();
   removeGroupListener?.();
 });

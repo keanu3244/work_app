@@ -101,6 +101,7 @@ const title = computed(() => options.value.title || '聊天');
 const messages = ref<ChatMessage[]>([]);
 const draft = ref('');
 const composing = ref(false);
+const sending = ref(false);
 const messageScrollTop = ref(0);
 const announcement = ref('');
 const pendingFile = ref<File | null>(null);
@@ -112,6 +113,11 @@ const lastMessageId = computed(() => {
 const orderedMessages = computed(() => [...messages.value].reverse());
 let removePeerListener: (() => void) | null = null;
 let removeGroupListener: (() => void) | null = null;
+let messagesRequestID = 0;
+let groupProfileRequestID = 0;
+let lastReadReceiptKey = '';
+let pageActive = false;
+const pendingReadReceiptKeys = new Set<string>();
 
 async function scrollMessagesToBottom() {
   await nextTick();
@@ -221,39 +227,62 @@ function previewImage(message: ChatMessage) {
 }
 
 async function loadMessages() {
-  const peer_id = options.value.peer_id;
-  let res;
+  const chat = { ...options.value };
+  const requestID = ++messagesRequestID;
   try {
-    res = await IMApi.messages({ contact_id: options.value.contact_id, peer_id, direction: 0 });
+    const res = await IMApi.messages({ contact_id: chat.contact_id, peer_id: chat.peer_id, direction: 0 });
+    if (!pageActive || requestID !== messagesRequestID)
+      return;
+    messages.value = res.list;
+    scrollMessagesToBottom();
+    const last = res.list[0];
+    if (!chat.contact_id && last?.contact_id)
+      options.value.contact_id = last.contact_id;
+    const contact_id = options.value.contact_id || last?.contact_id;
+    const readReceiptKey = contact_id && last?.msg_id ? `${contact_id}:${last.msg_id}` : '';
+    if (!contact_id || !last?.msg_id || readReceiptKey === lastReadReceiptKey || pendingReadReceiptKeys.has(readReceiptKey))
+      return;
+    pendingReadReceiptKeys.add(readReceiptKey);
+    try {
+      if (chat.type === '2')
+        await IMApi.groupRead({ contact_id, msg_id: last.msg_id });
+      else
+        await IMApi.peerRead({ contact_id, peer_id: chat.peer_id, msg_id: last.msg_id });
+      if (pageActive && requestID === messagesRequestID) {
+        lastReadReceiptKey = readReceiptKey;
+        uni.$emit('im.read', { contact_id, msg_id: last.msg_id });
+      }
+    }
+    finally {
+      pendingReadReceiptKeys.delete(readReceiptKey);
+    }
   }
   catch (error: any) {
-    if (!options.value.contact_id && String(error?.message || '').includes('contact not found')) {
+    if (!pageActive || requestID !== messagesRequestID)
+      return;
+    if (!chat.contact_id && String(error?.message || '').includes('contact not found')) {
       messages.value = [];
       return;
     }
     uni.$u.toast(error?.message || '获取消息列表失败');
-    return;
-  }
-  messages.value = res.list;
-  scrollMessagesToBottom();
-  const last = res.list[0];
-  if (!options.value.contact_id && last?.contact_id)
-    options.value.contact_id = last.contact_id;
-  const contact_id = options.value.contact_id;
-  if (contact_id && last?.msg_id) {
-    if (options.value.type === '2')
-      await IMApi.groupRead({ contact_id, msg_id: last.msg_id });
-    else
-      await IMApi.peerRead({ contact_id, peer_id, msg_id: last.msg_id });
   }
 }
 
 async function loadGroupProfile() {
   if (options.value.type !== '2')
     return;
-  const res = await IMApi.groups();
-  const group = res.list.find(item => item.group_id === options.value.peer_id);
-  announcement.value = group?.announcement || '';
+  const requestID = ++groupProfileRequestID;
+  try {
+    const res = await IMApi.groups();
+    if (!pageActive || requestID !== groupProfileRequestID)
+      return;
+    const group = res.list.find(item => item.group_id === options.value.peer_id);
+    announcement.value = group?.announcement || '';
+  }
+  catch (error) {
+    if (pageActive && requestID === groupProfileRequestID)
+      console.error('load group profile failed', error);
+  }
 }
 
 async function recall(message: ChatMessage) {
@@ -267,43 +296,63 @@ async function recall(message: ChatMessage) {
 }
 
 async function send() {
-  if (composing.value)
+  if (composing.value || sending.value)
     return;
+  const chat = { ...options.value };
   const text = draft.value.trim();
   const file = pendingFile.value;
   if (!text && !file)
     return;
+  sending.value = true;
+  let textSent = !text;
+  let fileSent = !file;
   draft.value = '';
   pendingFile.value = null;
-  if (options.value.type === '2') {
-    if (text) {
-      const message = await IMApi.sendGroup({ group_id: options.value.peer_id, text });
-      options.value.contact_id = message.contact_id || options.value.contact_id;
+  try {
+    if (chat.type === '2') {
+      if (text) {
+        const message = await IMApi.sendGroup({ group_id: chat.peer_id, text });
+        options.value.contact_id = message.contact_id || chat.contact_id;
+        textSent = true;
+      }
+      if (file) {
+        const uploaded = await uploadChatFile(file);
+        const message = await IMApi.sendGroupFile({ group_id: chat.peer_id, file: uploaded });
+        options.value.contact_id = message.contact_id || options.value.contact_id;
+        fileSent = true;
+      }
     }
-    if (file) {
-      const uploaded = await uploadChatFile(file);
-      const message = await IMApi.sendGroupFile({ group_id: options.value.peer_id, file: uploaded });
-      options.value.contact_id = message.contact_id || options.value.contact_id;
+    else {
+      if (text) {
+        const message = await IMApi.sendPeer({
+          receiver_uid: chat.peer_id,
+          contact_id: chat.contact_id,
+          text,
+        });
+        options.value.contact_id = message.contact_id || chat.contact_id;
+        textSent = true;
+      }
+      if (file) {
+        const uploaded = await uploadChatFile(file);
+        const message = await IMApi.sendPeerFile({
+          receiver_uid: chat.peer_id,
+          contact_id: options.value.contact_id,
+          file: uploaded,
+        });
+        options.value.contact_id = message.contact_id || options.value.contact_id;
+        fileSent = true;
+      }
     }
   }
-  else {
-    if (text) {
-      const message = await IMApi.sendPeer({
-        receiver_uid: options.value.peer_id,
-        contact_id: options.value.contact_id,
-        text,
-      });
-      options.value.contact_id = message.contact_id || options.value.contact_id;
-    }
-    if (file) {
-      const uploaded = await uploadChatFile(file);
-      const message = await IMApi.sendPeerFile({
-        receiver_uid: options.value.peer_id,
-        contact_id: options.value.contact_id,
-        file: uploaded,
-      });
-      options.value.contact_id = message.contact_id || options.value.contact_id;
-    }
+  catch (error: any) {
+    if (!textSent && !draft.value)
+      draft.value = text;
+    if (!fileSent && !pendingFile.value)
+      pendingFile.value = file;
+    uni.$u.toast(error?.message || '发送失败');
+  }
+  finally {
+    sending.value = false;
   }
   await loadMessages();
 }
@@ -318,24 +367,36 @@ function clearPendingFile() {
 }
 
 async function sendImage() {
-  const chooseResult = await uni.chooseImage({ count: 1 });
-  const filePath = chooseResult.tempFilePaths[0];
-  if (!filePath)
+  if (sending.value)
     return;
-  const url = await uploadImage(filePath);
-  if (options.value.type === '2') {
-    const message = await IMApi.sendGroupImage({ group_id: options.value.peer_id, url });
-    options.value.contact_id = message.contact_id || options.value.contact_id;
+  const chat = { ...options.value };
+  sending.value = true;
+  try {
+    const chooseResult = await uni.chooseImage({ count: 1 });
+    const filePath = chooseResult.tempFilePaths[0];
+    if (!filePath)
+      return;
+    const url = await uploadImage(filePath);
+    if (chat.type === '2') {
+      const message = await IMApi.sendGroupImage({ group_id: chat.peer_id, url });
+      options.value.contact_id = message.contact_id || chat.contact_id;
+    }
+    else {
+      const message = await IMApi.sendPeerImage({
+        receiver_uid: chat.peer_id,
+        contact_id: chat.contact_id,
+        url,
+      });
+      options.value.contact_id = message.contact_id || chat.contact_id;
+    }
+    await loadMessages();
   }
-  else {
-    const message = await IMApi.sendPeerImage({
-      receiver_uid: options.value.peer_id,
-      contact_id: options.value.contact_id,
-      url,
-    });
-    options.value.contact_id = message.contact_id || options.value.contact_id;
+  catch (error: any) {
+    uni.$u.toast(error?.message || '发送图片失败');
   }
-  await loadMessages();
+  finally {
+    sending.value = false;
+  }
 }
 
 function bindRealtime() {
@@ -365,18 +426,22 @@ function bindRealtime() {
 }
 
 onLoad((query) => {
+  pageActive = true;
   options.value = Object.fromEntries(Object.entries(query || {}).map(([key, value]) => [key, String(value)]));
   uni.setNavigationBarTitle({ title: title.value });
   bindRealtime();
+});
+
+onShow(() => {
+  pageActive = true;
   loadGroupProfile();
   loadMessages();
 });
 
-onShow(() => {
-  loadGroupProfile();
-});
-
 onUnload(() => {
+  pageActive = false;
+  messagesRequestID += 1;
+  groupProfileRequestID += 1;
   removePeerListener?.();
   removeGroupListener?.();
 });

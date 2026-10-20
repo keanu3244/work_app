@@ -164,7 +164,7 @@ export default function useLocation() {
 
     // 定时获取位置
     watchId = window.setInterval(() => {
-      if (isWatching.value) {
+      if (isWatching.value && !isLocating.value) {
         getLocation(options).catch((err) => {
           console.error('监听位置更新失败', err);
         });

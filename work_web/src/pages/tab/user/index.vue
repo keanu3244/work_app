@@ -62,6 +62,8 @@ const session = computed(() => getSession());
 const blocks = ref<UserBasic[]>([]);
 const currentVersion = computed(() => currentAppVersion());
 const versionLabel = computed(() => `当前版本 ${currentVersion.value.versionName}`);
+let blocksRequestID = 0;
+let pageActive = false;
 
 // 复制
 const toCopyUid = async () => {
@@ -105,8 +107,16 @@ async function checkUpdate() {
 }
 
 async function loadBlocks() {
-  const res = await IMApi.blockList();
-  blocks.value = res.list;
+  const requestID = ++blocksRequestID;
+  try {
+    const res = await IMApi.blockList();
+    if (pageActive && requestID === blocksRequestID)
+      blocks.value = res.list;
+  }
+  catch (error: any) {
+    if (pageActive && requestID === blocksRequestID)
+      uni.$u.toast(error?.message || '加载黑名单失败');
+  }
 }
 
 async function unblock(uid: string) {
@@ -126,7 +136,15 @@ function logout() {
   }
 }
 
-onShow(loadBlocks);
+onShow(() => {
+  pageActive = true;
+  loadBlocks();
+});
+
+onUnload(() => {
+  pageActive = false;
+  blocksRequestID += 1;
+});
 </script>
 
 <style scoped lang="scss">

@@ -186,6 +186,7 @@
           </view>
           <view class="chat-actions">
             <u-button v-if="activeItem.type === 'friend'" size="small" text="拉黑" @click="blockActivePeer" />
+            <u-button v-if="activeItem.type === 'group'" size="small" text="群设置" @click="openGroupSettings" />
             <u-button v-if="activeItem.type === 'group'" size="small" text="群公告" @click="showGroupTools = !showGroupTools" />
           </view>
         </view>
@@ -259,7 +260,7 @@
               class="composer-input"
               placeholder="Enter 发送，Shift + Enter 换行"
               :adjust-position="false"
-              @keydown.enter.exact.prevent="send"
+              @keydown="handleComposerKeydown"
             />
           </view>
           <u-button type="primary" text="发送" @click="send" />
@@ -310,6 +311,7 @@ const blocks = ref<UserBasic[]>([]);
 const activeItem = ref<ConversationItem | null>(null);
 const messages = ref<ChatMessage[]>([]);
 const draft = ref('');
+const sending = ref(false);
 const messageScrollTop = ref(0);
 const friendUid = ref('');
 const groupName = ref('');
@@ -323,6 +325,12 @@ let removeGroupListener: (() => void) | null = null;
 let removeFriendListener: (() => void) | null = null;
 let workspaceLoaded = false;
 let lastReadReceiptKey = '';
+let workspaceRequestID = 0;
+let conversationsRequestID = 0;
+let messagesRequestID = 0;
+let blocksRequestID = 0;
+let pageActive = false;
+const pendingReadReceiptKeys = new Set<string>();
 
 function friendName(friend: FriendItem) {
   return friend.remark || friend.nick || `用户 ${friend.uid}`;
@@ -479,6 +487,9 @@ function isGroupMemberSelected(friend: FriendItem) {
 
 function selectItem(item: ConversationItem) {
   activeItem.value = item;
+  messagesRequestID += 1;
+  messages.value = [];
+  lastReadReceiptKey = '';
   showGroupTools.value = false;
   announcementDraft.value = item.type === 'group' ? (item.source as GroupInfo).announcement || '' : '';
   loadMessages();
@@ -513,6 +524,8 @@ function selectGroup(group: GroupInfo) {
 }
 
 async function loadWorkspace() {
+  const requestID = ++workspaceRequestID;
+  const conversationRequestID = ++conversationsRequestID;
   loading.value = true;
   try {
     const [conversationRes, friendRes, requestRes, groupRes] = await Promise.all([
@@ -521,7 +534,10 @@ async function loadWorkspace() {
       IMApi.friendRequests('inbox'),
       IMApi.groups(),
     ]);
-    conversations.value = conversationRes.contacts;
+    if (!pageActive || requestID !== workspaceRequestID)
+      return;
+    if (conversationRequestID === conversationsRequestID)
+      conversations.value = conversationRes.contacts;
     friends.value = friendRes.list;
     requests.value = requestRes.list;
     groups.value = groupRes.list;
@@ -532,51 +548,90 @@ async function loadWorkspace() {
       if (fresh)
         activeItem.value = fresh;
     }
+    workspaceLoaded = true;
   }
   catch (error: any) {
-    uni.$u.toast(error?.message || '加载失败');
+    if (pageActive && requestID === workspaceRequestID)
+      uni.$u.toast(error?.message || '加载失败');
   }
   finally {
-    loading.value = false;
+    if (requestID === workspaceRequestID)
+      loading.value = false;
   }
 }
 
 async function loadConversations() {
-  const res = await IMApi.conversations();
-  conversations.value = res.contacts;
-  if (activeItem.value) {
-    const fresh = conversationItems.value.find(item => item.key === activeItem.value?.key);
-    if (fresh)
-      activeItem.value = fresh;
+  const requestID = ++conversationsRequestID;
+  try {
+    const res = await IMApi.conversations();
+    if (!pageActive || requestID !== conversationsRequestID)
+      return;
+    conversations.value = res.contacts;
+    if (!activeItem.value && conversationItems.value.length) {
+      selectItem(conversationItems.value[0]);
+    }
+    else if (activeItem.value) {
+      const fresh = conversationItems.value.find(item => item.key === activeItem.value?.key);
+      if (fresh)
+        activeItem.value = fresh;
+    }
+  }
+  catch (error) {
+    if (pageActive && requestID === conversationsRequestID)
+      console.error('load conversations failed', error);
   }
 }
 
 async function loadMessages() {
-  if (!activeItem.value)
+  const selected = activeItem.value;
+  if (!selected)
     return;
+  const requestID = ++messagesRequestID;
   loadingMessages.value = true;
   try {
     const res = await IMApi.messages({
-      contact_id: activeItem.value.conversation?.contact_id,
-      peer_id: activeItem.value.peerId,
+      contact_id: selected.conversation?.contact_id,
+      peer_id: selected.peerId,
       direction: 0,
     });
+    if (!pageActive || requestID !== messagesRequestID || activeItem.value?.key !== selected.key)
+      return;
     messages.value = res.list;
     scrollMessagesToBottom();
     const last = res.list[0];
-    if (!activeItem.value.conversation && last?.contact_id)
-      activeItem.value.conversation = { contact_id: last.contact_id } as Conversation;
-    const contactId = activeItem.value.conversation?.contact_id || last?.contact_id;
+    if (!selected.conversation && last?.contact_id)
+      selected.conversation = { contact_id: last.contact_id } as Conversation;
+    const contactId = selected.conversation?.contact_id || last?.contact_id;
     const readReceiptKey = contactId && last?.msg_id ? `${contactId}:${last.msg_id}` : '';
-    if (readReceiptKey && readReceiptKey !== lastReadReceiptKey) {
-      lastReadReceiptKey = readReceiptKey;
-      if (activeItem.value.type === 'group')
-        await IMApi.groupRead({ contact_id: contactId, msg_id: last.msg_id });
-      else
-        await IMApi.peerRead({ contact_id: contactId, peer_id: activeItem.value.peerId, msg_id: last.msg_id });
+    if (readReceiptKey && readReceiptKey !== lastReadReceiptKey && !pendingReadReceiptKeys.has(readReceiptKey)) {
+      pendingReadReceiptKeys.add(readReceiptKey);
+      try {
+        if (selected.type === 'group')
+          await IMApi.groupRead({ contact_id: contactId, msg_id: last.msg_id });
+        else
+          await IMApi.peerRead({ contact_id: contactId, peer_id: selected.peerId, msg_id: last.msg_id });
+        lastReadReceiptKey = readReceiptKey;
+        conversations.value = conversations.value.map((conversation) => {
+          if (conversation.contact_id !== contactId)
+            return conversation;
+          const latestMsgID = conversation.last_msg?.msg_id;
+          return latestMsgID && BigInt(latestMsgID) > BigInt(last.msg_id)
+            ? conversation
+            : { ...conversation, unread_count: 0, last_read_msg_id: last.msg_id };
+        });
+        const fresh = conversationItems.value.find(item => item.key === selected.key);
+        if (activeItem.value?.key === selected.key && fresh)
+          activeItem.value = fresh;
+        await loadConversations();
+      }
+      finally {
+        pendingReadReceiptKeys.delete(readReceiptKey);
+      }
     }
   }
   catch (error: any) {
+    if (requestID !== messagesRequestID || activeItem.value?.key !== selected.key)
+      return;
     if (String(error?.message || '').includes('contact not found')) {
       messages.value = [];
       return;
@@ -584,72 +639,99 @@ async function loadMessages() {
     uni.$u.toast(error?.message || '获取消息失败');
   }
   finally {
-    loadingMessages.value = false;
+    if (requestID === messagesRequestID)
+      loadingMessages.value = false;
   }
 }
 
 async function send() {
+  const target = activeItem.value;
   const text = draft.value.trim();
   const imagePath = pendingImagePath.value;
   const file = pendingFile.value;
-  if ((!text && !imagePath && !file) || !activeItem.value)
+  if ((!text && !imagePath && !file) || !target || sending.value)
     return;
+  sending.value = true;
+  let textSent = !text;
+  let imageSent = !imagePath;
+  let fileSent = !file;
   draft.value = '';
   pendingImagePath.value = '';
   pendingFile.value = null;
-  if (text) {
-    if (activeItem.value.type === 'group') {
-      const message = await IMApi.sendGroup({ group_id: activeItem.value.peerId, text });
-      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
+  try {
+    if (text) {
+      if (target.type === 'group') {
+        const message = await IMApi.sendGroup({ group_id: target.peerId, text });
+        target.conversation = { ...(target.conversation || {}), contact_id: message.contact_id } as Conversation;
+      }
+      else {
+        const message = await IMApi.sendPeer({
+          receiver_uid: target.peerId,
+          contact_id: target.conversation?.contact_id,
+          text,
+        });
+        target.conversation = { ...(target.conversation || {}), contact_id: message.contact_id } as Conversation;
+      }
+      textSent = true;
     }
-    else {
-      const message = await IMApi.sendPeer({
-        receiver_uid: activeItem.value.peerId,
-        contact_id: activeItem.value.conversation?.contact_id,
-        text,
-      });
-      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
+    if (imagePath) {
+      const url = await uploadImage(imagePath);
+      if (target.type === 'group') {
+        const message = await IMApi.sendGroupImage({ group_id: target.peerId, url });
+        target.conversation = { ...(target.conversation || {}), contact_id: message.contact_id } as Conversation;
+      }
+      else {
+        const message = await IMApi.sendPeerImage({
+          receiver_uid: target.peerId,
+          contact_id: target.conversation?.contact_id,
+          url,
+        });
+        target.conversation = { ...(target.conversation || {}), contact_id: message.contact_id } as Conversation;
+      }
+      imageSent = true;
+    }
+    if (file) {
+      const uploaded = await uploadChatFile(file);
+      if (target.type === 'group') {
+        const message = await IMApi.sendGroupFile({ group_id: target.peerId, file: uploaded });
+        target.conversation = { ...(target.conversation || {}), contact_id: message.contact_id } as Conversation;
+      }
+      else {
+        const message = await IMApi.sendPeerFile({
+          receiver_uid: target.peerId,
+          contact_id: target.conversation?.contact_id,
+          file: uploaded,
+        });
+        target.conversation = { ...(target.conversation || {}), contact_id: message.contact_id } as Conversation;
+      }
+      fileSent = true;
     }
   }
-  if (imagePath) {
-    const url = await uploadImage(imagePath);
-    if (activeItem.value.type === 'group') {
-      const message = await IMApi.sendGroupImage({ group_id: activeItem.value.peerId, url });
-      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
-    }
-    else {
-      const message = await IMApi.sendPeerImage({
-        receiver_uid: activeItem.value.peerId,
-        contact_id: activeItem.value.conversation?.contact_id,
-        url,
-      });
-      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
-    }
+  catch (error: any) {
+    if (!textSent && !draft.value)
+      draft.value = text;
+    if (!imageSent && !pendingImagePath.value)
+      pendingImagePath.value = imagePath;
+    if (!fileSent && !pendingFile.value)
+      pendingFile.value = file;
+    uni.$u.toast(error?.message || '发送失败');
   }
-  if (file) {
-    const uploaded = await uploadChatFile(file);
-    if (activeItem.value.type === 'group') {
-      const message = await IMApi.sendGroupFile({ group_id: activeItem.value.peerId, file: uploaded });
-      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
-    }
-    else {
-      const message = await IMApi.sendPeerFile({
-        receiver_uid: activeItem.value.peerId,
-        contact_id: activeItem.value.conversation?.contact_id,
-        file: uploaded,
-      });
-      activeItem.value.conversation = { ...(activeItem.value.conversation || {}), contact_id: message.contact_id } as Conversation;
-    }
+  finally {
+    sending.value = false;
   }
-  await Promise.all([loadMessages(), loadConversations()]);
+  await Promise.all([
+    activeItem.value?.key === target.key ? loadMessages() : Promise.resolve(),
+    loadConversations(),
+  ]);
 }
 
 async function chooseImage() {
-  if (!activeItem.value)
+  const selectedKey = activeItem.value?.key;
+  if (!selectedKey)
     return;
   const chooseResult = await uni.chooseImage({ count: 1 });
   const filePath = chooseResult.tempFilePaths[0];
-  if (!filePath)
+  if (!filePath || activeItem.value?.key !== selectedKey)
     return;
   pendingImagePath.value = filePath;
 }
@@ -664,14 +746,34 @@ function clearPendingImage() {
 }
 
 async function chooseFile() {
-  if (!activeItem.value)
+  const selectedKey = activeItem.value?.key;
+  if (!selectedKey)
     return;
   const result = await (uni as any).chooseFile({ count: 1 });
+  if (activeItem.value?.key !== selectedKey)
+    return;
   pendingFile.value = result.tempFiles?.[0]?.file || result.tempFiles?.[0] || null;
 }
 
 function clearPendingFile() {
   pendingFile.value = null;
+}
+
+function handleComposerKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229)
+    return;
+  event.preventDefault();
+  send();
+}
+
+function openGroupSettings() {
+  if (activeItem.value?.type !== 'group')
+    return;
+  const params = new URLSearchParams({
+    group_id: activeItem.value.peerId,
+    title: activeItem.value.title,
+  });
+  uni.navigateTo({ url: `/pages/common/group/index?${params.toString()}` });
 }
 
 async function recall(message: ChatMessage) {
@@ -738,8 +840,16 @@ async function blockActivePeer() {
 }
 
 async function loadBlocks() {
-  const res = await IMApi.blockList();
-  blocks.value = res.list;
+  const requestID = ++blocksRequestID;
+  try {
+    const res = await IMApi.blockList();
+    if (pageActive && requestID === blocksRequestID)
+      blocks.value = res.list;
+  }
+  catch (error) {
+    if (pageActive && requestID === blocksRequestID)
+      console.error('load block list failed', error);
+  }
 }
 
 async function unblock(uid: string) {
@@ -751,7 +861,7 @@ function bindRealtime() {
   if (removePeerListener)
     return;
   const reloadActive = (payload: any) => {
-    if (payload?.tp && payload.tp !== 'msg')
+    if (payload?.tp && payload.tp !== 'msg' && payload.tp !== 'msg_recall')
       return;
     const message = payload?.info || payload;
     loadConversations();
@@ -784,16 +894,21 @@ onShow(() => {
     uni.redirectTo({ url: '/pages/common/login/index?redirect=/pages/web/index' });
     return;
   }
+  pageActive = true;
   setupRealtime();
   bindRealtime();
-  if (!workspaceLoaded) {
-    workspaceLoaded = true;
+  if (!workspaceLoaded && !loading.value) {
     loadWorkspace();
     loadBlocks();
   }
 });
 
 onUnload(() => {
+  pageActive = false;
+  workspaceRequestID += 1;
+  conversationsRequestID += 1;
+  messagesRequestID += 1;
+  blocksRequestID += 1;
   removePeerListener?.();
   removeGroupListener?.();
   removeFriendListener?.();

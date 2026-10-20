@@ -57,6 +57,9 @@ const name = ref('');
 const announcement = ref('');
 const memberInput = ref('');
 const members = ref<GroupMemberItem[]>([]);
+let membersRequestID = 0;
+let groupProfileRequestID = 0;
+let pageActive = false;
 
 function parseUIDs(value: string) {
   const list = value.split(',').map(item => item.trim()).filter(Boolean);
@@ -72,17 +75,34 @@ function roleText(role: number) {
 }
 
 async function loadMembers() {
-  const res = await IMApi.groupMembers(groupId.value);
-  members.value = res.list;
+  const requestID = ++membersRequestID;
+  try {
+    const res = await IMApi.groupMembers(groupId.value);
+    if (pageActive && requestID === membersRequestID)
+      members.value = res.list;
+  }
+  catch (error: any) {
+    if (pageActive && requestID === membersRequestID)
+      uni.$u.toast(error?.message || '加载群成员失败');
+  }
 }
 
 async function loadGroupProfile() {
-  const res = await IMApi.groups();
-  const group = res.list.find(item => item.group_id === groupId.value);
-  if (!group)
-    return;
-  name.value = group.name;
-  announcement.value = group.announcement || '';
+  const requestID = ++groupProfileRequestID;
+  try {
+    const res = await IMApi.groups();
+    if (!pageActive || requestID !== groupProfileRequestID)
+      return;
+    const group = res.list.find(item => item.group_id === groupId.value);
+    if (!group)
+      return;
+    name.value = group.name;
+    announcement.value = group.announcement || '';
+  }
+  catch (error: any) {
+    if (pageActive && requestID === groupProfileRequestID)
+      uni.$u.toast(error?.message || '加载群资料失败');
+  }
 }
 
 async function updateProfile() {
@@ -90,6 +110,7 @@ async function updateProfile() {
     group_id: groupId.value,
     name: name.value,
   });
+  groupProfileRequestID += 1;
   uni.$u.toast('已保存');
 }
 
@@ -137,6 +158,7 @@ async function dissolve() {
 }
 
 onLoad((query) => {
+  pageActive = true;
   groupId.value = String(query?.group_id || '');
   name.value = String(query?.title || '');
   announcement.value = String(query?.announcement || '');
@@ -145,8 +167,15 @@ onLoad((query) => {
 });
 
 onShow(() => {
+  pageActive = true;
   if (groupId.value)
     loadGroupProfile();
+});
+
+onUnload(() => {
+  pageActive = false;
+  membersRequestID += 1;
+  groupProfileRequestID += 1;
 });
 </script>
 

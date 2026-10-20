@@ -75,6 +75,9 @@ const selectedGroupMemberUIDs = ref<string[]>([]);
 let removePeerListener: (() => void) | null = null;
 let removeGroupListener: (() => void) | null = null;
 let removeFriendListener: (() => void) | null = null;
+let removeReadListener: (() => void) | null = null;
+let homeRequestID = 0;
+let pageActive = false;
 const createGroupButtonText = computed(() => `创建群聊${selectedGroupMemberUIDs.value.length ? `(${selectedGroupMemberUIDs.value.length})` : ''}`);
 const homeItems = computed(() => {
   const friendItems = friends.value.map(friend => ({
@@ -211,6 +214,7 @@ async function createGroup() {
 }
 
 async function loadHome() {
+  const requestID = ++homeRequestID;
   loading.value = true;
   try {
     const [conversationRes, friendRes, groupRes] = await Promise.all([
@@ -218,12 +222,19 @@ async function loadHome() {
       IMApi.friends(),
       IMApi.groups(),
     ]);
+    if (!pageActive || requestID !== homeRequestID)
+      return;
     conversations.value = conversationRes.contacts;
     friends.value = friendRes.list;
     groups.value = groupRes.list;
   }
+  catch (error: any) {
+    if (pageActive && requestID === homeRequestID)
+      uni.$u.toast(error?.message || '加载消息失败');
+  }
   finally {
-    loading.value = false;
+    if (requestID === homeRequestID)
+      loading.value = false;
   }
 }
 
@@ -237,17 +248,23 @@ function bindRealtime() {
   removePeerListener = () => uni.$off('im.peer', reload);
   removeGroupListener = () => uni.$off('im.group', reload);
   removeFriendListener = () => uni.$off('im.friend', reload);
+  uni.$on('im.read', reload);
+  removeReadListener = () => uni.$off('im.read', reload);
 }
 
 onShow(() => {
+  pageActive = true;
   bindRealtime();
   loadHome();
 });
 
 onUnload(() => {
+  pageActive = false;
+  homeRequestID += 1;
   removePeerListener?.();
   removeGroupListener?.();
   removeFriendListener?.();
+  removeReadListener?.();
 });
 
 type HomeItem = typeof homeItems.value[number];

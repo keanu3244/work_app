@@ -2,6 +2,7 @@ import { io, Socket } from 'socket.io-client';
 import { getSession, getToken } from '@/utils/auth';
 
 let socket: Socket | null = null;
+let authLogoutListenerBound = false;
 
 function linkMessage(payload: any) {
   return payload?.ms?.[0]?.link_msg;
@@ -58,6 +59,10 @@ function handleFriend(payload: any) {
 }
 
 export function setupRealtime() {
+  if (!authLogoutListenerBound) {
+    uni.$on('auth.logout', disconnectRealtime);
+    authLogoutListenerBound = true;
+  }
   const token = getToken();
   const session = getSession();
   if (!token || !session?.uid || socket)
