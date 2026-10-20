@@ -68,6 +68,11 @@ export function setupRealtime() {
     transports: ['websocket', 'polling'],
     auth: { token },
     query: { uid: session.uid },
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 10000,
+    timeout: 10000,
   });
   socket.on('connect', () => socket?.emit('auth', token));
   socket.on('im.peer', handlePeer);

@@ -20,7 +20,8 @@ class WorkContainerPage extends StatefulWidget {
   State<WorkContainerPage> createState() => _WorkContainerPageState();
 }
 
-class _WorkContainerPageState extends State<WorkContainerPage> {
+class _WorkContainerPageState extends State<WorkContainerPage>
+    with WidgetsBindingObserver {
   final _store = const AppSessionStore();
   final _authClient = AuthClient();
   static const _systemChannel = MethodChannel('work_app/system');
@@ -32,8 +33,22 @@ class _WorkContainerPageState extends State<WorkContainerPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _webCacheKey = DateTime.now().millisecondsSinceEpoch.toString();
     _registerPushToken();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _registerPushToken();
+    }
   }
 
   Future<void> _registerPushToken() async {
